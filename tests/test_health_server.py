@@ -1,202 +1,382 @@
-"""Tests for the common health server module."""
+"""Tests for the health check server."""
 
-from collections.abc import Callable
-from typing import Any
-from unittest.mock import MagicMock, patch
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
+import json
+import socket
+import threading
+import time
+from unittest.mock import Mock, patch
 
 import pytest
 
-from common.health_server import HealthServer
+from common.health_server import HealthHandler, HealthServer
 
 
-class TestHealthServer:
-    """Test the HealthServer class."""
+class TestHealthServerInit:
+    """Tests for HealthServer initialization."""
+
+    def test_init_stores_health_func_and_no_thread(self) -> None:
+        """Test HealthServer stores health_func and initializes thread to None."""
+        health_func = Mock(return_value={"status": "healthy"})
+
+        server = HealthServer(0, health_func)
+        try:
+            assert server.health_func is health_func
+            assert server.thread is None
+        finally:
+            server.server_close()
+
+    def test_init_binds_to_port(self) -> None:
+        """Test HealthServer binds to the given port."""
+        health_func = Mock(return_value={"status": "healthy"})
+
+        server = HealthServer(0, health_func)
+        try:
+            # server_address[1] is the actual port (non-zero when port 0 is used)
+            assert server.server_address[1] > 0
+        finally:
+            server.server_close()
+
+    def test_server_is_threading_http_server(self) -> None:
+        """discogsography-cu2.61: HealthServer must be a ThreadingHTTPServer (not the
+        single-threaded HTTPServer) so one blocked connection cannot wedge the accept
+        loop for every other client.
+        """
+        health_func = Mock(return_value={"status": "healthy"})
+
+        server = HealthServer(0, health_func)
+        try:
+            assert isinstance(server, ThreadingHTTPServer)
+            assert server.daemon_threads is True
+        finally:
+            server.server_close()
+
+    def test_handler_has_socket_timeout(self) -> None:
+        """discogsography-cu2.61: HealthHandler must bound how long it will block on
+        rfile.readline() for a connected-but-silent peer (e.g. a TCP-connect port scan
+        or a half-open connection), instead of blocking indefinitely.
+        """
+        assert HealthHandler.timeout == 5
+
+
+class TestHealthServerGetHealthData:
+    """Tests for HealthServer.get_health_data method."""
+
+    def test_get_health_data_returns_func_result(self) -> None:
+        """Test get_health_data returns the result of the health function."""
+        expected = {"status": "healthy", "uptime": 42}
+        health_func = Mock(return_value=expected)
+
+        server = HealthServer(0, health_func)
+        try:
+            result = server.get_health_data()
+            assert result == expected
+            health_func.assert_called_once()
+        finally:
+            server.server_close()
+
+    def test_get_health_data_handles_exception(self) -> None:
+        """Test get_health_data returns an unhealthy response when health_func raises."""
+        health_func = Mock(side_effect=RuntimeError("database connection lost"))
+
+        server = HealthServer(0, health_func)
+        try:
+            result = server.get_health_data()
+            assert result["status"] == "unhealthy"
+            assert "database connection lost" in result["error"]
+            assert "timestamp" in result
+        finally:
+            server.server_close()
+
+    def test_get_health_data_exception_includes_timestamp(self) -> None:
+        """Test that error responses include an ISO timestamp."""
+        health_func = Mock(side_effect=ValueError("bad value"))
+
+        server = HealthServer(0, health_func)
+        try:
+            result = server.get_health_data()
+            # Timestamp should be a non-empty ISO string
+            assert isinstance(result["timestamp"], str)
+            assert len(result["timestamp"]) > 0
+        finally:
+            server.server_close()
+
+
+class TestHealthServerStartBackground:
+    """Tests for HealthServer.start_background method."""
+
+    def test_start_background_creates_daemon_thread(self) -> None:
+        """Test start_background creates a daemon thread."""
+        health_func = Mock(return_value={"status": "healthy"})
+
+        server = HealthServer(0, health_func)
+        try:
+            server.start_background()
+            assert server.thread is not None
+            assert server.thread.daemon is True
+        finally:
+            server.stop()
+            server.server_close()
+
+    def test_start_background_thread_is_alive(self) -> None:
+        """Test that the thread is alive after start_background."""
+        health_func = Mock(return_value={"status": "healthy"})
+
+        server = HealthServer(0, health_func)
+        try:
+            server.start_background()
+            assert server.thread is not None
+            assert server.thread.is_alive()
+        finally:
+            server.stop()
+            server.server_close()
+
+
+class TestHealthServerStop:
+    """Tests for HealthServer.stop method."""
+
+    def test_stop_shuts_down_running_server(self) -> None:
+        """Test stop shuts down and joins a running background thread."""
+        health_func = Mock(return_value={"status": "healthy"})
+
+        server = HealthServer(0, health_func)
+        server.start_background()
+        assert server.thread is not None
+        assert server.thread.is_alive()
+
+        server.stop()
+
+        assert not server.thread.is_alive()
+        server.server_close()
+
+    def test_stop_without_thread_skips_join(self) -> None:
+        """Test stop skips the thread.join() when thread is None (covers the if-branch).
+
+        Python 3.13's socketserver.shutdown() blocks if serve_forever() was never
+        called, so we mock shutdown() to isolate the thread-join branch logic.
+        """
+        health_func = Mock(return_value={"status": "healthy"})
+
+        server = HealthServer(0, health_func)
+        try:
+            assert server.thread is None
+            # Mock shutdown to avoid Python 3.13 blocking, then call stop()
+            # to exercise the "if self.thread" False branch
+            with patch.object(server, "shutdown"):
+                server.stop()
+            # Verify thread is still None (join was never called)
+            assert server.thread is None
+        finally:
+            server.server_close()
+
+
+class TestHealthHandlerHTTP:
+    """Integration tests for the HTTP request handler."""
 
     @pytest.fixture
-    def test_health_func(self) -> Callable[[], dict[str, Any]]:
-        """Create a test health function."""
+    def running_server(self):
+        """Start a HealthServer in a background thread and yield it."""
+        health_func = Mock(return_value={"status": "healthy", "service": "test"})
+        server = HealthServer(0, health_func)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        yield server
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
-        def health_func() -> dict[str, Any]:
-            return {
-                "status": "healthy",
-                "service": "test_service",
-                "timestamp": "2023-01-01T00:00:00Z",
-            }
+    def _connect(self, server: HealthServer) -> HTTPConnection:
+        port = server.server_address[1]
+        return HTTPConnection("127.0.0.1", port, timeout=5)
 
-        return health_func
+    def test_get_health_returns_200_and_json(self, running_server: HealthServer) -> None:
+        """Test GET /health returns 200 with JSON health data."""
+        conn = self._connect(running_server)
+        conn.request("GET", "/health")
+        response = conn.getresponse()
+
+        assert response.status == 200
+        assert response.getheader("Content-Type") == "application/json"
+
+        body = json.loads(response.read())
+        assert body["status"] == "healthy"
+        assert body["service"] == "test"
+
+    def test_get_metrics_returns_404_when_metrics_disabled(self, running_server: HealthServer) -> None:
+        """Test GET /metrics returns 404 when metrics are disabled (default)."""
+        conn = self._connect(running_server)
+        conn.request("GET", "/metrics")
+        response = conn.getresponse()
+
+        assert response.status == 404
+
+    def test_get_root_returns_404(self, running_server: HealthServer) -> None:
+        """Test GET / returns 404 (only /health is served)."""
+        conn = self._connect(running_server)
+        conn.request("GET", "/")
+        response = conn.getresponse()
+
+        assert response.status == 404
+
+    def test_log_message_suppressed(self, running_server: HealthServer) -> None:
+        """Test that HTTP server logs are suppressed (log_message is a no-op).
+
+        Verified by making a request and confirming no log output is emitted
+        (log_message override calls pass).
+        """
+        # A request to /health will invoke log_message internally.
+        # If log_message raises, this test will fail.
+        conn = self._connect(running_server)
+        conn.request("GET", "/health")
+        response = conn.getresponse()
+        response.read()  # consume body
+
+        # No assertion needed — the absence of an exception is the test
+
+    def test_health_data_reflects_func_output(self, running_server: HealthServer) -> None:
+        """Test that health endpoint returns whatever get_health_data provides."""
+        new_data = {"status": "degraded", "queue_depth": 999}
+        running_server.health_func = Mock(return_value=new_data)
+
+        conn = self._connect(running_server)
+        conn.request("GET", "/health")
+        response = conn.getresponse()
+        body = json.loads(response.read())
+
+        assert body == new_data
+
+
+class TestHealthServerMetricsEndpoint:
+    """Tests for the optional /metrics endpoint added to HealthServer."""
 
     @pytest.fixture
-    def health_server(self, test_health_func: Callable[[], dict[str, Any]]) -> HealthServer:
-        """Create a HealthServer instance for testing."""
-        return HealthServer(port=8999, health_func=test_health_func)
+    def running_server_metrics_enabled(self):
+        """Start a HealthServer with metrics_enabled=True and yield it."""
+        health_func = Mock(return_value={"status": "healthy"})
+        server = HealthServer(0, health_func, metrics_enabled=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        yield server
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
-    def test_health_server_init(self, health_server: HealthServer, test_health_func: Callable[[], dict[str, Any]]) -> None:
-        """Test HealthServer initialization."""
-        assert health_server.server_port == 8999
-        assert health_server.health_func == test_health_func
-        assert health_server.thread is None
+    @pytest.fixture
+    def running_server_metrics_disabled(self):
+        """Start a HealthServer with metrics_enabled=False (default) and yield it."""
+        health_func = Mock(return_value={"status": "healthy"})
+        server = HealthServer(0, health_func)  # default: metrics_enabled=False
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        yield server
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
-    def test_get_health_data_success(self, health_server: HealthServer) -> None:
-        """Test successful health data retrieval."""
-        health_data = health_server.get_health_data()
+    def _connect(self, server: HealthServer) -> HTTPConnection:
+        port = server.server_address[1]
+        return HTTPConnection("127.0.0.1", port, timeout=5)
 
-        assert health_data["status"] == "healthy"
-        assert health_data["service"] == "test_service"
-        assert health_data["timestamp"] == "2023-01-01T00:00:00Z"
+    def test_metrics_enabled_returns_200(self, running_server_metrics_enabled: HealthServer) -> None:
+        """GET /metrics returns 200 when metrics_enabled=True."""
+        conn = self._connect(running_server_metrics_enabled)
+        conn.request("GET", "/metrics")
+        response = conn.getresponse()
 
-    def test_get_health_data_exception(self) -> None:
-        """Test health data retrieval when health function raises exception."""
+        assert response.status == 200
 
-        def failing_health_func() -> dict[str, Any]:
-            raise ValueError("Service unavailable")
+    def test_metrics_enabled_content_type_is_prometheus(self, running_server_metrics_enabled: HealthServer) -> None:
+        """GET /metrics returns a prometheus text/plain Content-Type."""
+        conn = self._connect(running_server_metrics_enabled)
+        conn.request("GET", "/metrics")
+        response = conn.getresponse()
+        content_type = response.getheader("Content-Type", "")
 
-        server = HealthServer(port=8999, health_func=failing_health_func)
-        health_data = server.get_health_data()
+        assert "text/plain" in content_type
 
-        assert health_data["status"] == "unhealthy"
-        assert health_data["error"] == "Service unavailable"
-        assert "timestamp" in health_data
+    def test_metrics_enabled_body_is_nonempty(self, running_server_metrics_enabled: HealthServer) -> None:
+        """GET /metrics body is non-empty Prometheus exposition format."""
+        conn = self._connect(running_server_metrics_enabled)
+        conn.request("GET", "/metrics")
+        response = conn.getresponse()
+        body = response.read()
 
-    def test_start_background_thread(self, health_server: HealthServer) -> None:
-        """Test starting server in background thread."""
-        with (
-            patch.object(health_server, "serve_forever"),
-            patch.object(health_server, "shutdown") as mock_shutdown,
-        ):
-            health_server.start_background()
+        assert len(body) > 0
 
-            # Verify thread was created and started
-            assert health_server.thread is not None
-            assert health_server.thread.daemon is True
+    def test_metrics_disabled_returns_404(self, running_server_metrics_disabled: HealthServer) -> None:
+        """GET /metrics returns 404 when metrics_enabled=False (default)."""
+        conn = self._connect(running_server_metrics_disabled)
+        conn.request("GET", "/metrics")
+        response = conn.getresponse()
 
-            # Stop the server to clean up (mocked to avoid hanging)
-            health_server.stop()
-            mock_shutdown.assert_called_once()
+        assert response.status == 404
 
-    def test_stop_server(self, health_server: HealthServer) -> None:
-        """Test stopping the health server."""
-        # Mock the shutdown method and thread
-        with patch.object(health_server, "shutdown") as mock_shutdown:
-            mock_thread = MagicMock()
-            health_server.thread = mock_thread
+    def test_metrics_enabled_flag_stored(self) -> None:
+        """HealthServer stores the metrics_enabled flag correctly."""
+        health_func = Mock(return_value={"status": "healthy"})
+        server_on = HealthServer(0, health_func, metrics_enabled=True)
+        server_off = HealthServer(0, health_func, metrics_enabled=False)
+        server_default = HealthServer(0, health_func)
+        try:
+            assert server_on.metrics_enabled is True
+            assert server_off.metrics_enabled is False
+            assert server_default.metrics_enabled is False
+        finally:
+            server_on.server_close()
+            server_off.server_close()
+            server_default.server_close()
 
-            health_server.stop()
+    def test_health_endpoint_unaffected_by_metrics_flag(self, running_server_metrics_enabled: HealthServer) -> None:
+        """GET /health still returns 200 when metrics_enabled=True."""
+        conn = self._connect(running_server_metrics_enabled)
+        conn.request("GET", "/health")
+        response = conn.getresponse()
 
-            mock_shutdown.assert_called_once()
-            mock_thread.join.assert_called_once_with(timeout=5)
-
-    def test_stop_server_no_thread(self, health_server: HealthServer) -> None:
-        """Test stopping server when no thread exists."""
-        health_server.thread = None
-
-        with patch.object(health_server, "shutdown") as mock_shutdown:
-            health_server.stop()
-            mock_shutdown.assert_called_once()
-
-    def test_custom_port_and_health_func(self) -> None:
-        """Test creating health server with custom parameters."""
-
-        def custom_health() -> dict[str, Any]:
-            return {"status": "custom", "port": 9000}
-
-        custom_server = HealthServer(port=9000, health_func=custom_health)
-
-        assert custom_server.server_port == 9000
-        assert custom_server.health_func == custom_health
-
-        health_data = custom_server.get_health_data()
-        assert health_data["status"] == "custom"
-        assert health_data["port"] == 9000
-
-
-class TestHealthHandler:
-    """Test the HealthHandler class."""
-
-    def test_log_message_suppressed(self) -> None:
-        """Test that log messages are suppressed."""
-        from common.health_server import HealthHandler
-
-        # Test the log_message method directly without creating an instance
-        # Create a dummy instance just to get the method
-        class TestHandler(HealthHandler):
-            def __init__(self) -> None:
-                # Don't call super().__init__ to avoid HTTP parsing
-                pass
-
-        handler = TestHandler()
-
-        # This should not raise any exceptions and should do nothing
-        handler.log_message("Test message: %s", "test")
-        # If we get here without exception, the test passes
+        assert response.status == 200
+        body = json.loads(response.read())
+        assert body["status"] == "healthy"
 
 
-class TestHealthHandlerDoGet:
-    """Test HealthHandler.do_GET for the 404 path (lines 28-30)."""
+class TestHealthServerConcurrency:
+    """discogsography-cu2.61: an idle/half-open connection must not wedge the server."""
 
-    def test_do_get_returns_404_for_unknown_path(self) -> None:
-        """Test that do_GET sends 404 for an unknown path (not /health or /metrics)."""
-        from common.health_server import HealthHandler
+    @pytest.fixture
+    def running_server(self):
+        """Start a HealthServer in a background thread and yield it."""
+        health_func = Mock(return_value={"status": "healthy"})
+        server = HealthServer(0, health_func)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        yield server
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
-        class TestHandler(HealthHandler):
-            def __init__(self) -> None:
-                # Don't call super().__init__ to avoid HTTP server setup
-                pass
+    def test_silent_connection_does_not_block_other_clients(self, running_server: HealthServer) -> None:
+        """Reproduces the failure scenario: a client completes the TCP handshake but
+        never sends a request (a port scan / half-open connection). With the
+        single-threaded HTTPServer this wedges the accept loop and every subsequent
+        /health request hangs. With ThreadingHTTPServer + a bounded handler timeout,
+        a second, well-behaved client must still get served promptly.
+        """
+        port = running_server.server_address[1]
 
-        handler = TestHandler()
-        handler.path = "/unknown"
+        # Open a TCP connection and send nothing — simulates the wedging peer.
+        silent_sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        try:
+            # A concurrent, well-behaved client must not be blocked by the silent peer.
+            start = time.monotonic()
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", "/health")
+            response = conn.getresponse()
+            elapsed = time.monotonic() - start
 
-        mock_send_response = MagicMock()
-        mock_end_headers = MagicMock()
-        handler.send_response = mock_send_response
-        handler.end_headers = mock_end_headers
-
-        handler.do_GET()
-
-        mock_send_response.assert_called_once_with(404)
-        mock_end_headers.assert_called_once()
-
-    def test_do_get_returns_404_for_root_path(self) -> None:
-        """Test that do_GET sends 404 for root path."""
-        from common.health_server import HealthHandler
-
-        class TestHandler(HealthHandler):
-            def __init__(self) -> None:
-                pass
-
-        handler = TestHandler()
-        handler.path = "/"
-
-        mock_send_response = MagicMock()
-        mock_end_headers = MagicMock()
-        handler.send_response = mock_send_response
-        handler.end_headers = mock_end_headers
-
-        handler.do_GET()
-
-        mock_send_response.assert_called_once_with(404)
-
-    def test_do_get_returns_200_for_health_path(self) -> None:
-        """Test that do_GET sends 200 for /health path."""
-        from common.health_server import HealthHandler
-
-        class TestHandler(HealthHandler):
-            def __init__(self) -> None:
-                pass
-
-        handler = TestHandler()
-        handler.path = "/health"
-        handler.server = MagicMock()
-        handler.server.get_health_data.return_value = {"status": "healthy"}
-
-        mock_send_response = MagicMock()
-        mock_send_header = MagicMock()
-        mock_end_headers = MagicMock()
-        mock_wfile = MagicMock()
-        handler.send_response = mock_send_response
-        handler.send_header = mock_send_header
-        handler.end_headers = mock_end_headers
-        handler.wfile = mock_wfile
-
-        handler.do_GET()
-
-        mock_send_response.assert_called_once_with(200)
+            assert response.status == 200
+            body = json.loads(response.read())
+            assert body["status"] == "healthy"
+            # Must be served immediately, well under the silent handler's own timeout.
+            assert elapsed < 2
+            conn.close()
+        finally:
+            silent_sock.close()
