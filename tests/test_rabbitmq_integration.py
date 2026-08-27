@@ -22,14 +22,14 @@ discards the output.
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable
 import os
+from collections.abc import Awaitable, Callable
 from urllib.parse import quote
 
-from aio_pika import Message
-from aio_pika.abc import AbstractChannel, AbstractRobustConnection
 import httpx
 import pytest
+from aio_pika import Message
+from aio_pika.abc import AbstractChannel, AbstractRobustConnection
 
 from common.rabbitmq_resilient import AsyncResilientRabbitMQ
 

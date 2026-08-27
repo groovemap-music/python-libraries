@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "discogsography-common"
+name = "groovemap-runtime"
 version = "0.1.0"
-description = "Common utilities and configuration for discogsography services"
+description = "Runtime resilience, health, normalization, and observability primitives for GrooveMap services"
 authors = [{name = "Robert Wlodarczyk", email = "robert@simplicityguy.com"}]
 readme = "README.md"
 requires-python = ">=3.13"
@@ -13,18 +13,105 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
 ]
-license = {text = "PolyForm-Noncommercial-1.0.0"}
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
-    "aio-pika>=10.0.1",
-    "neo4j-rust-ext>=6.2.0.0",
-    "pika>=1.4.4",
-    "prometheus-client>=0.26.0",
-    "psycopg[binary]>=3.3.4",
-    "pulp>=3.3.2",
+    "orjson>=3.12.0",
+    "structlog>=26.1.0",
 ]
 
+[project.optional-dependencies]
+metrics = ["prometheus-client>=0.26.0"]
+neo4j = ["neo4j-rust-ext>=6.2.0.0"]
+postgres = ["psycopg[binary]>=3.3.4"]
+rabbitmq = ["aio-pika>=10.0.1", "pika>=1.4.4"]
+all = ["aio-pika>=10.0.1", "neo4j-rust-ext>=6.2.0.0", "pika>=1.4.4", "prometheus-client>=0.26.0", "psycopg[binary]>=3.3.4"]
+
+[project.urls]
+Homepage = "https://groovemap.music"
+Repository = "https://github.com/groovemap-music/python-libraries"
+Issues = "https://github.com/groovemap-music/python-libraries/issues"
+
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["src/common"]
+
+[dependency-groups]
+dev = [
+    "build>=1.3.0",
+    "commitizen>=4.9.1",
+    "cyclonedx-bom>=7.2.1",
+    "httpx>=0.28.1",
+    "mypy>=1.18.2",
+    "pip-audit>=2.9.0",
+    "pip-licenses>=5.0.0",
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.0",
+]
+
+[tool.uv.workspace]
+members = ["agent-tools"]
+
+[tool.uv.sources]
+groovemap-runtime = {workspace = true}
+
+[tool.ruff]
+line-length = 150
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["ARG", "B", "C4", "E", "F", "I", "PLC", "PTH", "RUF", "S", "SIM", "T20", "TCH", "UP", "W"]
+ignore = ["B008", "C901", "E501", "S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["common"]
+lines-after-imports = 2
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
+"tests/**/*.py" = ["PLC", "S105", "T201"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+packages = ["common"]
+
+[[tool.mypy.overrides]]
+module = ["pika.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-ra -q --strict-markers --tb=short"
+testpaths = ["tests"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: tests requiring a live backing service",
+]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "uv"
+version_scheme = "pep440"
+version_files = ["agent-tools/pyproject.toml"]
+tag_format = "v$version"
+annotated_tag = true
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
+changelog_start_rev = "ee3c44c"

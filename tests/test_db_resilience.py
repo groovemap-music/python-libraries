@@ -1505,7 +1505,8 @@ class TestOutageBackoff:
         Calls the implementation captured at import time, since the suite-wide
         `fast_outage_backoff` fixture replaces `wait` to keep other tests quick.
         """
-        from unittest.mock import AsyncMock as _AsyncMock, patch as _patch
+        from unittest.mock import AsyncMock as _AsyncMock
+        from unittest.mock import patch as _patch
 
         from common.outage_backoff import OutageBackoff
 

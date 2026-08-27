@@ -1,11 +1,11 @@
 """Resilient RabbitMQ connection management with circuit breaker and retry logic."""
 
 import asyncio
-from collections.abc import Callable
 import contextlib
 import inspect
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -13,7 +13,8 @@ import aio_pika
 from aio_pika import connect_robust
 from aio_pika.exceptions import AMQPChannelError, AMQPConnectionError, ConnectionClosed
 from pika import BlockingConnection, URLParameters
-from pika.exceptions import AMQPChannelError as PikaChannelError, AMQPConnectionError as PikaConnectionError
+from pika.exceptions import AMQPChannelError as PikaChannelError
+from pika.exceptions import AMQPConnectionError as PikaConnectionError
 
 from .db_resilience import (
     CircuitBreaker,

@@ -1,13 +1,13 @@
 """Tests for PostgreSQL resilient connection module."""
 
 import asyncio
+import time
 from contextlib import suppress
 from queue import Empty as Empty_
-import time
 from unittest.mock import AsyncMock, Mock, patch
 
-from psycopg.errors import InterfaceError, OperationalError
 import pytest
+from psycopg.errors import InterfaceError, OperationalError
 
 from common.db_resilience import CircuitState
 from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL, ResilientPostgreSQLPool

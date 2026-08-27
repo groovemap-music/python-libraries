@@ -1,13 +1,13 @@
 """Resilient PostgreSQL connection management with circuit breaker and retry logic."""
 
 import asyncio
-from collections.abc import AsyncIterator, Generator
 import contextlib
-from contextlib import asynccontextmanager, contextmanager
 import logging
-from queue import Empty, Full, Queue
 import threading
 import time
+from collections.abc import AsyncIterator, Generator
+from contextlib import asynccontextmanager, contextmanager
+from queue import Empty, Full, Queue
 from typing import Any, cast
 
 import psycopg

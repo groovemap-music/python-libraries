@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "groovemap-agent-tools"
+version = "0.1.0"
+description = "Framework-neutral agent query tools for GrooveMap"
+authors = [{name = "Robert Wlodarczyk", email = "robert@simplicityguy.com"}]
+readme = "README.md"
+requires-python = ">=3.13"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["groovemap-runtime==0.1.0"]
+
+[project.urls]
+Homepage = "https://groovemap.music"
+Repository = "https://github.com/groovemap-music/python-libraries"
+Issues = "https://github.com/groovemap-music/python-libraries/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/common"]

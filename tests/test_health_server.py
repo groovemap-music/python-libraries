@@ -1,11 +1,11 @@
 """Tests for the health check server."""
 
-from http.client import HTTPConnection
-from http.server import ThreadingHTTPServer
 import json
 import socket
 import threading
 import time
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 from unittest.mock import Mock, patch
 
 import pytest

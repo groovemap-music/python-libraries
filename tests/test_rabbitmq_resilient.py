@@ -3,9 +3,9 @@
 from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from aio_pika.exceptions import AMQPConnectionError
 from pika.exceptions import AMQPConnectionError as PikaConnectionError
-import pytest
 
 from common.db_resilience import ExponentialBackoff
 from common.rabbitmq_resilient import (
@@ -236,8 +236,8 @@ class TestAsyncResilientRabbitMQ:
         our parameter is applied rather than silently dropped -- the exact failure mode
         that made aio-pika 10's kwargs removal dangerous.
         """
-        from aio_pika.robust_connection import RobustConnection
         import aiormq
+        from aio_pika.robust_connection import RobustConnection
 
         conn = AsyncResilientRabbitMQ(connection_url=connection_url, heartbeat=600, retry_delay=5.0)
 
