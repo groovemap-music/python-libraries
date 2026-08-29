@@ -37,8 +37,8 @@ from common.rabbitmq_resilient import AsyncResilientRabbitMQ
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "")
-RABBITMQ_USER = os.environ.get("RABBITMQ_USERNAME", "discogsography")
-RABBITMQ_PASS = os.environ.get("RABBITMQ_PASSWORD", "discogsography")
+RABBITMQ_USER = os.environ.get("RABBITMQ_USERNAME", "groovemap")
+RABBITMQ_PASS = os.environ.get("RABBITMQ_PASSWORD", "groovemap")
 AMQP_PORT = int(os.environ.get("RABBITMQ_AMQP_PORT", "5672"))
 MGMT_PORT = int(os.environ.get("RABBITMQ_MGMT_PORT", "15672"))
 

@@ -52,8 +52,8 @@ def _build_amqp_url() -> str:
     Reads the password via the standard _FILE secret convention (Docker secrets),
     falling back to plain environment variables, then to defaults.
     """
-    user = get_secret("RABBITMQ_USERNAME", "discogsography")
-    password = get_secret("RABBITMQ_PASSWORD", "discogsography")
+    user = get_secret("RABBITMQ_USERNAME", "groovemap")
+    password = get_secret("RABBITMQ_PASSWORD", "groovemap")
     host = getenv("RABBITMQ_HOST", "rabbitmq")
     port = getenv("RABBITMQ_PORT", "5672")
     return f"amqp://{_url_quote(user, safe='')}:{_url_quote(password, safe='')}@{host}:{port}/%2F"

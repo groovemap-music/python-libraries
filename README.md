@@ -57,3 +57,8 @@ from `SimplicityGuy/discogsography` by filtering `main` to `common/`, `tests/com
 the repository root and `tests/common/` to `tests/`. This retained 154 relevant commits.
 Historical license revisions remain available in Git history; the original monorepo remains
 unchanged.
+
+## Documentation
+
+See the [documentation index](docs/README.md) for package boundaries, private dependency
+authentication, and source-history provenance.

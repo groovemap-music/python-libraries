@@ -22,7 +22,7 @@ typecheck:
     uv run mypy
 
 test:
-    uv run pytest -m "not integration"
+    uv run pytest -m "not integration" --cov=common --cov-report=term-missing --cov-report=xml
 
 test-integration:
     uv run pytest -m integration
