@@ -8,14 +8,14 @@ version = "0.1.0"
 description = "Runtime resilience, health, normalization, and observability primitives for GrooveMap services"
 authors = [{name = "Robert Wlodarczyk", email = "robert@simplicityguy.com"}]
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14,<3.15"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
 license = "MIT"
@@ -57,6 +57,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/common"]
 
+[tool.hatch.build.targets.sdist]
+include = ["/LICENSE", "/README.md", "/src"]
+
 [tool.uv]
 exclude-newer = "2 days"
 
@@ -68,7 +71,7 @@ groovemap-runtime = {workspace = true}
 
 [tool.ruff]
 line-length = 150
-target-version = "py313"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["ARG", "B", "C4", "E", "F", "I", "PLC", "PTH", "RUF", "S", "SIM", "T20", "TCH", "UP", "W"]
@@ -84,7 +87,7 @@ lines-after-imports = 2
 "scripts/*.py" = ["S108", "T201"]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.14"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

@@ -1,9 +1,14 @@
-# Private Python package authentication
+# Python package source authentication transition
 
-The extracted service repositories will consume tagged releases from the private
-`groovemap-music/python-libraries` repository. Dependency declarations identify a tag;
-`uv.lock` records the resolved immutable commit. Never place a token, password, or GitHub
-App private key in the URL.
+The extracted service repositories temporarily consume immutable commits from the private
+`groovemap-music/python-libraries` repository. Dependency declarations and `uv.lock` record the
+resolved commit. Never place a token, password, or GitHub App private key in the URL.
+
+After this repository becomes public, the same credential-free HTTPS declarations work without a
+GitHub App. The exact compatibility evidence and cleanup preconditions are recorded in the
+[consumer matrix](docs/consumer-compatibility.md). Do not remove the temporary credentials until
+an anonymous HTTPS fetch resolves the reviewed revision and a separate OpenTofu cleanup plan is
+approved.
 
 ## Local development
 
@@ -40,5 +45,6 @@ that performs `uv sync --frozen` and removes temporary helper state before that 
 finishes. Credentials must never enter `ARG`, `ENV`, build contexts, cache keys, labels,
 remote URLs, copied files, or final image layers.
 
-CI and image publication remain disabled until the GitHub App installation, secret scope,
-workflow permissions, and cache behavior receive a separate security review.
+The App variable and Actions/Dependabot secrets remain temporary. Publication, anonymous-fetch
+verification, and credential removal are separate reviewed operations; no library validation
+command performs them.

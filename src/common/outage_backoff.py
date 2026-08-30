@@ -7,7 +7,7 @@ no time dimension: with no pause between cycles a message is redelivered every
 few seconds and reaches 20 deliveries in ~3 minutes, at which point RabbitMQ
 dead-letters a perfectly valid record. A sustained outage therefore drains the
 head of the queue into the DLQ — silent data loss from a routine maintenance
-window (discogsography-rb05).
+window.
 
 The batch-mode consumers dodged this by moving retry state out of the broker and
 into process memory (deque + backoff). The per-message consumers keep retry state

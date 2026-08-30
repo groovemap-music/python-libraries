@@ -1131,7 +1131,7 @@ class _FakeAsyncConn:
 
 
 class TestResilientConnectionCloseOnReplace:
-    """Regression tests for discogsography-cu2.33 (close-on-replace leak)."""
+    """Regression tests for close-on-replace leak."""
 
     def test_cu2_33_sync_closes_old_connection_on_replace(self) -> None:
         """The old unhealthy connection must be closed before a replacement overwrites it."""
@@ -1168,7 +1168,7 @@ class TestResilientConnectionCloseOnReplace:
 
         Health caching and teardown hysteresis are disabled here so a single
         failed probe replaces the connection; both are covered on their own by
-        TestConnectionTeardownHysteresis (discogsography-4ajv).
+        TestConnectionTeardownHysteresis.
         """
         from common.db_resilience import AsyncResilientConnection
 
@@ -1209,7 +1209,7 @@ class TestResilientConnectionCloseOnReplace:
 
 
 class TestConnectionTeardownHysteresis:
-    """Regression tests for discogsography-4ajv (health-check TOCTOU teardown)."""
+    """Regression tests for health-check TOCTOU teardown."""
 
     @pytest.mark.asyncio
     async def test_single_failed_probe_keeps_connection(self) -> None:
@@ -1354,7 +1354,7 @@ class TestConnectionTeardownHysteresis:
 
 
 class TestReconnectDoesNotHoldLock:
-    """Regression tests for discogsography-y1qn (lock held across retry/backoff)."""
+    """Regression tests for lock held across retry/backoff."""
 
     @pytest.mark.asyncio
     async def test_healthy_callers_not_blocked(self) -> None:
@@ -1476,7 +1476,7 @@ class TestReconnectDoesNotHoldLock:
 
 
 class TestOutageBackoff:
-    """Tests for the per-message consumer outage throttle (discogsography-rb05)."""
+    """Tests for the per-message consumer outage throttle."""
 
     def test_delay_grows_and_is_capped(self) -> None:
         from common.outage_backoff import OutageBackoff

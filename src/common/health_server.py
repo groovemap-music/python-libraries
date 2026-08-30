@@ -2,11 +2,14 @@
 
 import json
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -112,7 +115,7 @@ class HealthServer(ThreadingHTTPServer):
         listening socket. Only server_close() releases that file
         descriptor. Without it, stop()'s 'Stop the health server' contract
         is only half kept: the accept loop stops, but the socket FD stays
-        open for the rest of the process (discogsography-c4ag). Guarded in
+        open for the rest of the process. Guarded in
         a finally so a join() timeout still lets the socket close.
         """
         try:

@@ -39,7 +39,7 @@ class TestHealthServerInit:
             server.server_close()
 
     def test_server_is_threading_http_server(self) -> None:
-        """discogsography-cu2.61: HealthServer must be a ThreadingHTTPServer (not the
+        """Regression: HealthServer must be a ThreadingHTTPServer (not the
         single-threaded HTTPServer) so one blocked connection cannot wedge the accept
         loop for every other client.
         """
@@ -53,7 +53,7 @@ class TestHealthServerInit:
             server.server_close()
 
     def test_handler_has_socket_timeout(self) -> None:
-        """discogsography-cu2.61: HealthHandler must bound how long it will block on
+        """Regression: HealthHandler must bound how long it will block on
         rfile.readline() for a connected-but-silent peer (e.g. a TCP-connect port scan
         or a half-open connection), instead of blocking indefinitely.
         """
@@ -171,7 +171,7 @@ class TestHealthServerStop:
             server.server_close()
 
     def test_stop_releases_the_listening_socket(self) -> None:
-        """discogsography-c4ag: stop() must call server_close(), not just
+        """Regression: stop() must call server_close(), not just
         shutdown() — socketserver.BaseServer.shutdown() only stops the
         serve_forever() accept loop; it does NOT close the bound listening
         socket. Only server_close() releases that file descriptor."""
@@ -290,7 +290,7 @@ class TestHealthHandlerHTTP:
         assert body == new_data
 
     def test_unhealthy_status_returns_503(self, running_server: HealthServer) -> None:
-        """Regression for discogsography-dsf2: `curl -f` (and Compose's
+        """Regression: `curl -f` (and Compose's
         condition: service_healthy) key off HTTP status only, so an "unhealthy"
         JSON body must produce a non-2xx response — not the previously-hardcoded 200.
         """
@@ -434,7 +434,7 @@ class TestHealthServerMetricsEndpoint:
 
 
 class TestHealthServerConcurrency:
-    """discogsography-cu2.61: an idle/half-open connection must not wedge the server."""
+    """Regression: an idle/half-open connection must not wedge the server."""
 
     @pytest.fixture
     def running_server(self):

@@ -5,10 +5,9 @@ import contextlib
 import logging
 import threading
 import time
-from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from queue import Empty, Full, Queue
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
 from psycopg.errors import DatabaseError, InterfaceError, OperationalError
@@ -21,6 +20,10 @@ from .db_resilience import (
     DatabaseUnavailableError,
     ExponentialBackoff,
 )
+
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Generator
 
 
 logger = logging.getLogger(__name__)
@@ -94,7 +97,7 @@ class ResilientPostgreSQLPool:
             # autocommit or the SELECT 1 probe below raises, close it before
             # re-raising — otherwise the connection is orphaned and only
             # reclaimed by unreliable/delayed __del__ GC, pinning a backend
-            # against the shared PgBouncer session-mode cap (discogsography-n1s8).
+            # against the shared PgBouncer session-mode cap.
             try:
                 conn.autocommit = True  # Enable autocommit by default
                 # Test the connection
@@ -343,7 +346,7 @@ class AsyncResilientPostgreSQL(AsyncResilientConnection[Any]):
         conn = await psycopg.AsyncConnection.connect(**self.connection_params)
         # connect() returning means a real backend is live. If set_autocommit
         # raises, close it before re-raising rather than orphaning it to
-        # unreliable/delayed GC (discogsography-n1s8).
+        # unreliable/delayed GC.
         try:
             await conn.set_autocommit(True)
         except BaseException:
@@ -468,7 +471,7 @@ class AsyncPostgreSQLPool:
         every connection attempt. Previously the breaker was constructed but
         never invoked: during a sustained outage every caller independently
         walked the full 5-attempt retry ladder instead of fast-failing after
-        3 failures (discogsography-4q2s).
+        3 failures.
         """
         return cast("psycopg.AsyncConnection[Any]", await self.circuit_breaker.call_async(self._raw_create_connection))
 
@@ -480,7 +483,7 @@ class AsyncPostgreSQLPool:
         # or the SELECT 1 probe raises, close it before re-raising — otherwise
         # the connection is orphaned and only reclaimed by unreliable/delayed
         # __del__ GC, pinning a backend against the shared PgBouncer
-        # session-mode cap for the GC-delay window (discogsography-n1s8).
+        # session-mode cap for the GC-delay window.
         # active_connections itself is already rolled back by every caller of
         # this method on failure; this closes the underlying OS resource too.
         try:
