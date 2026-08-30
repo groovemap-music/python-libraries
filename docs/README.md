@@ -4,6 +4,7 @@
 - [Runtime API, configuration, logging, and metrics](runtime.md)
 - [Agent-tools public API](agent-tools.md)
 - [Compatibility and release policy](compatibility-and-releases.md)
+- [Consumer compatibility and credential-removal gate](consumer-compatibility.md)
 - [Temporary private-package authentication](../private-package-auth.md)
 - [Source-history provenance](extraction.md)
 - [Organization logging emoji vocabulary](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md)

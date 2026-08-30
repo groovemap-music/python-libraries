@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "library": {
+    "repository": "groovemap-music/python-libraries",
+    "revision": "fadf3ab4132ee2f2b83a690941251fe565c594c6",
+    "python": "3.14.5",
+    "packages": [
+      "groovemap-runtime==0.1.0",
+      "groovemap-agent-tools==0.1.0"
+    ]
+  },
+  "verification": {
+    "command": "python scripts/verify-consumer-compatibility.py --workspace <groovemap-music-workspace>",
+    "consumer_command": "just check",
+    "source_transport": "local Git transport at the exact library revision",
+    "credential_environment": [
+      "GH_TOKEN",
+      "GITHUB_TOKEN",
+      "GROOVEMAP_CI_APP_CLIENT_ID",
+      "GROOVEMAP_CI_APP_PRIVATE_KEY"
+    ],
+    "credential_policy": "removed from every consumer subprocess",
+    "public_source": "https://github.com/groovemap-music/python-libraries.git",
+    "result": "passed"
+  },
+  "consumers": [
+    {
+      "repository": "analytics-engine",
+      "revision": "c4ee19168365b559c5af0d6c318d7e51f3aac616",
+      "packages": ["groovemap-runtime"],
+      "result": "passed"
+    },
+    {
+      "repository": "catalog-api",
+      "revision": "2eff1388adb6fd7e388e4bfbe4e0154b9ae706c7",
+      "packages": ["groovemap-agent-tools", "groovemap-runtime"],
+      "result": "passed"
+    },
+    {
+      "repository": "database-schema",
+      "revision": "1f24b00bb653978c0f2e7ce561e519034f4dce50",
+      "packages": ["groovemap-runtime"],
+      "result": "passed"
+    },
+    {
+      "repository": "discogs-graph-enricher",
+      "revision": "52a65b11c06c4023fc1a1b006d61ce09d8ed7e64",
+      "packages": ["groovemap-runtime"],
+      "result": "passed"
+    },
+    {
+      "repository": "discogs-sql-loader",
+      "revision": "9ad74282a03ae87d5696c7ea05f47a238fbbc0d3",
+      "packages": ["groovemap-runtime"],
+      "result": "passed"
+    },
+    {
+      "repository": "graph-explorer",
+      "revision": "dc3f14b6661fda81ac821fc9c360706b9f318d4b",
+      "packages": ["groovemap-runtime"],
+      "result": "passed"
+    },
+    {
+      "repository": "mcp-server",
+      "revision": "ea8e6b7480b049c1f6692e7687aa5c1464083ce1",
+      "packages": ["groovemap-agent-tools", "groovemap-runtime"],
+      "result": "passed"
+    },
+    {
+      "repository": "musicbrainz-graph-enricher",
+      "revision": "e4bc3ce47e17b337944de75998f83f54d2b57c98",
+      "packages": ["groovemap-runtime"],
+      "result": "passed"
+    },
+    {
+      "repository": "musicbrainz-sql-loader",
+      "revision": "50dffdb10fb110c07212f1dbdbce240fa042446e",
+      "packages": ["groovemap-runtime"],
+      "result": "passed"
+    },
+    {
+      "repository": "operations-console",
+      "revision": "67418b840646be577ecce7caa982fb9327b65d06",
+      "packages": ["groovemap-runtime"],
+      "result": "passed"
+    }
+  ],
+  "credential_removal": {
+    "performed": false,
+    "ready_after_publication": true,
+    "required_visibility": "public",
+    "secret_name": "GROOVEMAP_CI_APP_PRIVATE_KEY",
+    "variable_name": "GROOVEMAP_CI_APP_CLIENT_ID",
+    "resource_families": [
+      "github_actions_variable.ci_app_client_id",
+      "github_actions_secret.ci_app_private_key",
+      "github_dependabot_secret.ci_app_private_key"
+    ],
+    "consumer_set": [
+      "analytics-engine",
+      "catalog-api",
+      "database-schema",
+      "discogs-graph-enricher",
+      "discogs-sql-loader",
+      "graph-explorer",
+      "mcp-server",
+      "musicbrainz-graph-enricher",
+      "musicbrainz-sql-loader",
+      "operations-console"
+    ],
+    "preconditions": [
+      "python-libraries is public",
+      "anonymous HTTPS fetch resolves the recorded library revision",
+      "the recorded consumer matrix remains green",
+      "an exact OpenTofu plan removes only the listed credential instances",
+      "the exact OpenTofu plan receives separate operator approval"
+    ]
+  }
+}
