@@ -46,6 +46,11 @@ environments and imports both packages from their built wheels. `just release-dr
 generates SHA-256 checksums, a CycloneDX SBOM, third-party notices, and commit-bound local
 provenance without publishing, tagging, or pushing anything.
 
+From a clean reviewed commit, `just publication-readiness` runs the complete validation, audit,
+and release rehearsal and writes an ignored, deterministic attestation to `dist/`. The
+[publication-readiness guide](docs/publication-readiness.md) lists the visibility, anonymous-fetch,
+credential-removal, and package-release approvals that remain external to repository validation.
+
 ## License and history
 
 The current tree is licensed under the [MIT License](LICENSE). Its relevant source history was

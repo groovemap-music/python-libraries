@@ -9,7 +9,7 @@ setup:
 # A clean checkout must provision the locked workspace before validation. In particular,
 # mypy follows imports into every supported optional integration, so validation needs the
 # same all-extras environment used by package and install checks.
-check: setup format-check lint typecheck test automation-check consumer-matrix-check build distribution-check install-check license-check secret-scan bump-preview
+check: setup format-check lint typecheck test automation-check consumer-matrix-check publication-readiness-check build distribution-check install-check license-check secret-scan bump-preview
 
 format:
     uv run ruff format .
@@ -57,6 +57,9 @@ automation-check:
 consumer-matrix-check:
     uv run python scripts/verify-consumer-compatibility.py
 
+publication-readiness-check:
+    uv run python scripts/attest-publication-readiness.py --check
+
 audit:
     uv run pip-audit
 
@@ -70,3 +73,8 @@ bump:
 
 release-dry-run: check
     bash scripts/release-dry-run.sh
+
+# Produce ignored, commit-bound evidence only after every local validation surface passes.
+# This never commits, tags, pushes, publishes, changes visibility, or removes credentials.
+publication-readiness: audit release-dry-run
+    uv run python scripts/attest-publication-readiness.py --output dist/publication-readiness.json
