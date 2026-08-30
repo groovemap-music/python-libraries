@@ -23,15 +23,20 @@ discards the output.
 
 import asyncio
 import os
-from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import httpx
 import pytest
 from aio_pika import Message
-from aio_pika.abc import AbstractChannel, AbstractRobustConnection
 
 from common.rabbitmq_resilient import AsyncResilientRabbitMQ
+
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from aio_pika.abc import AbstractChannel, AbstractRobustConnection
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -210,7 +215,7 @@ class TestLiveReconnect:
                 OP_TIMEOUT,
             )
 
-            # discogsography-6ino: callbacks also fire on the INITIAL connect, so the
+            # Regression: callbacks also fire on the INITIAL connect, so the
             # flag is already set here. Clear it before dropping the connection —
             # otherwise the assertion below passes without a reconnect ever happening.
             reconnected.clear()

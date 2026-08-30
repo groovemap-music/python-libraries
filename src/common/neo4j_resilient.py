@@ -3,9 +3,8 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from neo4j import AsyncGraphDatabase, GraphDatabase
 from neo4j.exceptions import Neo4jError, ServiceUnavailable, SessionExpired
@@ -18,6 +17,10 @@ from .db_resilience import (
     ExponentialBackoff,
     ResilientConnection,
 )
+
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 logger = logging.getLogger(__name__)
@@ -168,7 +171,7 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
             self._lock = asyncio.Lock()
         async with self._lock:
             # Drivers replaced by a reconnect are closed on a grace timer; an
-            # explicit shutdown closes them now (discogsography-4ajv).
+            # explicit shutdown closes them now.
             await self._drain_deferred_closes()
             if self._connection:
                 try:

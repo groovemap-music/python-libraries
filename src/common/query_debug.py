@@ -22,7 +22,7 @@ _profiling_logger: logging.Logger | None = None
 #: Substring deny-list (case-insensitive) matched against rendered query text.
 #: Any query that touches one of these credential-bearing columns/tables has
 #: its bound parameters redacted before being written to DEBUG/profiling
-#: logs — see discogsography-elsu. Keep in sync with the columns/tables
+#: logs — see the credential-redaction contract Keep in sync with the columns/tables
 #: actually written by api/routers/auth.py and api/api.py's OAuth flow.
 _SENSITIVE_QUERY_MARKERS: tuple[str, ...] = (
     "hashed_password",

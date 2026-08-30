@@ -6,13 +6,16 @@ import inspect
 import logging
 import random
 import time
-from collections.abc import Callable
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from threading import Lock
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +30,7 @@ class DatabaseUnavailableError(Exception):
     tell "the database is down" apart from "this record is bad": the resilience
     wrappers used to raise a bare ``Exception`` here, so consumers classifying on
     exception type saw an outage as a deterministic, poison payload and
-    dead-lettered perfectly valid records (discogsography-4lrp).
+    dead-lettered perfectly valid records.
     """
 
 
@@ -317,7 +320,7 @@ class ResilientConnection[T]:
                 self._connection = None
 
 
-def _consume_task_exception(task: "asyncio.Task[Any]") -> None:
+def _consume_task_exception(task: asyncio.Task[Any]) -> None:
     """Retrieve a finished task's exception so asyncio does not warn about it."""
     if not task.cancelled():
         task.exception()
@@ -352,7 +355,7 @@ class AsyncResilientConnection[T]:
         # Seconds a replaced connection is left open so in-flight borrowers can drain.
         self.close_grace_period = close_grace_period
         # Seconds after a fully failed reconnect cycle during which callers fail
-        # fast instead of each repeating the cycle (discogsography-y1qn).
+        # fast instead of each repeating the cycle.
         self.reconnect_cooldown = reconnect_cooldown
         self._connection: T | None = None
         self._lock: asyncio.Lock | None = None
@@ -364,7 +367,7 @@ class AsyncResilientConnection[T]:
         self._last_failure_at: float | None = None
         self._last_failure_error: Exception | None = None
         # Connections detached from the manager but not yet closed, and the
-        # tasks that will close them (discogsography-4ajv).
+        # tasks that will close them.
         self._draining: list[Any] = []
         self._close_tasks: set[asyncio.Task[None]] = set()
 
@@ -400,8 +403,7 @@ class AsyncResilientConnection[T]:
     async def _connection_is_usable(self, connection: T) -> bool:
         """Decide whether an existing connection may still be handed out.
 
-        Two guards keep a merely BUSY connection from being torn down
-        (discogsography-4ajv):
+        Two guards keep a merely BUSY connection from being torn down:
 
         * a successful probe is trusted for ``health_check_ttl`` seconds, so
           borrowing does not pay a health round trip per call — that round trip
@@ -439,8 +441,7 @@ class AsyncResilientConnection[T]:
         object: a caller keeps using a session borrowed from it long after
         get_connection() returned, and the neo4j driver documents close() as
         NOT concurrency-safe with live sessions. So the replaced connection is
-        detached immediately and closed after ``close_grace_period``
-        (discogsography-4ajv).
+        detached immediately and closed after ``close_grace_period``.
         """
         if connection is None:
             return
@@ -479,8 +480,8 @@ class AsyncResilientConnection[T]:
         The manager's lock guards ONLY the connection handle. The reconnect
         cycle — up to ``max_retries`` driver-creation attempts, each of which can
         block for the driver's whole acquisition timeout, plus the backoff
-        sleeps between them — runs OUTSIDE the lock as a single shared task
-        (discogsography-y1qn). Before the fix, the first caller held the process
+        sleeps between them — runs OUTSIDE the lock as a single shared task.
+        Before the fix, the first caller held the process
         singleton lock for the entire failed cycle, every other coroutine in the
         process queued behind it, and each waiter then re-ran the full cycle
         itself, so the k-th caller failed only after roughly k cycles. Now

@@ -85,7 +85,7 @@ class TestResilientPostgreSQLPool:
     def test_create_connection_closes_conn_when_validation_fails(
         self, _mock_thread: Mock, mock_connect: Mock, connection_params: dict, mock_connection: Mock
     ) -> None:
-        """discogsography-n1s8: once psycopg.connect() returns, a real backend
+        """Regression: once psycopg.connect() returns, a real backend
         is live. If the SELECT 1 probe raises, the just-opened connection must
         be closed before the exception propagates — otherwise it is orphaned
         and only reclaimed by unreliable/delayed __del__ GC, pinning a
@@ -600,7 +600,7 @@ class TestAsyncResilientPostgreSQL:
     async def test_create_connection_closes_conn_when_set_autocommit_fails(
         self, mock_connect: Mock, connection_params: dict, mock_async_connection: AsyncMock
     ) -> None:
-        """discogsography-n1s8: connect() returning means a real backend is
+        """Regression: connect() returning means a real backend is
         live. If set_autocommit raises, the connection must be closed before
         the exception propagates rather than orphaned to GC."""
         mock_async_connection.set_autocommit.side_effect = OperationalError("autocommit failed")
@@ -828,7 +828,7 @@ class TestAsyncPostgreSQLPool:
     @pytest.mark.asyncio
     @patch("common.postgres_resilient.psycopg.AsyncConnection.connect")
     async def test_create_connection_routes_through_circuit_breaker(self, mock_connect: Mock, connection_params: dict) -> None:
-        """discogsography-4q2s: _create_connection must actually invoke the
+        """Regression: _create_connection must actually invoke the
         breaker constructed in __init__, not bypass it. 3 consecutive
         connect() failures must open the circuit so subsequent callers
         fast-fail (CircuitOpenError) instead of each walking the full
@@ -877,7 +877,7 @@ class TestAsyncPostgreSQLPool:
     async def test_create_connection_closes_conn_when_validation_fails(
         self, mock_connect: Mock, connection_params: dict, mock_async_connection: AsyncMock
     ) -> None:
-        """discogsography-n1s8: psycopg.AsyncConnection.connect() returning
+        """Regression: psycopg.AsyncConnection.connect() returning
         means a real backend is live. If the post-connect SELECT 1 probe
         raises, the just-opened connection must be closed before the
         exception propagates — otherwise it is orphaned and only reclaimed by
@@ -2474,7 +2474,7 @@ def _make_async_conn(*, healthy: bool = True) -> AsyncMock:
 
 
 class TestPgPoolBatchRegressions:
-    """Regression tests for the batch:pg-pool defect sweep (discogsography-cu2.*)."""
+    """Regression tests for the PostgreSQL pool defect sweep."""
 
     @pytest.fixture
     def connection_params(self) -> dict:
@@ -2482,7 +2482,7 @@ class TestPgPoolBatchRegressions:
 
     @pytest.mark.asyncio
     async def test_cu2_34_failed_replacement_does_not_yield_closed_conn(self, connection_params: dict) -> None:
-        """discogsography-cu2.34: a failed replacement must raise, not yield a stale CLOSED connection.
+        """Regression: a failed replacement must raise, not yield a stale CLOSED connection.
 
         A pooled connection fails its health check and every replacement create fails. The pool must
         surface 'Failed to get PostgreSQL connection...' rather than yielding the closed connection,
@@ -2511,7 +2511,7 @@ class TestPgPoolBatchRegressions:
 
     @pytest.mark.asyncio
     async def test_cu2_21_cancel_during_create_rolls_back_slot(self, connection_params: dict) -> None:
-        """discogsography-cu2.21: cancellation while creating a connection must not leak a slot.
+        """Regression: cancellation while creating a connection must not leak a slot.
 
         The empty-pool path reserves a slot (active_connections += 1) before awaiting
         _create_connection(). In Python 3.13 asyncio.CancelledError derives from BaseException, so an
@@ -2534,7 +2534,7 @@ class TestPgPoolBatchRegressions:
 
     @pytest.mark.asyncio
     async def test_cu2_21_cancel_during_health_test_releases_conn(self, connection_params: dict) -> None:
-        """discogsography-cu2.21: cancellation during the health probe must release the checked-out slot."""
+        """Regression: cancellation during the health probe must release the checked-out slot."""
         pool = AsyncPostgreSQLPool(connection_params=connection_params, min_connections=0, max_connections=5)
         await pool.initialize()
 
@@ -2555,7 +2555,7 @@ class TestPgPoolBatchRegressions:
 
     @pytest.mark.asyncio
     async def test_cu2_11_async_replenish_respects_max_connections(self, connection_params: dict) -> None:
-        """discogsography-cu2.11: the async health-check replenisher must not mint past max_connections.
+        """Regression: the async health-check replenisher must not mint past max_connections.
 
         When the pool is saturated (all connections checked out) the queue is empty, so the
         replenish branch fires every tick. Without a cap check it mints min_connections fresh
@@ -2583,7 +2583,7 @@ class TestPgPoolBatchRegressions:
 
     @pytest.mark.asyncio
     async def test_cu2_11_async_replenish_still_fills_up_to_max(self, connection_params: dict) -> None:
-        """discogsography-cu2.11: the cap gate must not block legitimate replenishment below max."""
+        """Regression: the cap gate must not block legitimate replenishment below max."""
         pool = AsyncPostgreSQLPool(connection_params=connection_params, min_connections=2, max_connections=3, health_check_interval=0)
         pool.connections = asyncio.Queue(maxsize=3)
         pool._lock = asyncio.Lock()
@@ -2604,7 +2604,7 @@ class TestPgPoolBatchRegressions:
         assert pool.active_connections <= pool.max_connections
 
     def test_cu2_11_sync_replenish_respects_max_connections(self, connection_params: dict) -> None:
-        """discogsography-cu2.11 (fix-one-fix-all): sync replenisher must also honor max_connections."""
+        """The synchronous replenisher must also honor max_connections."""
         import threading as _threading
 
         with patch("common.postgres_resilient.threading.Thread"), patch("common.postgres_resilient.psycopg.connect") as mock_connect:
@@ -2630,7 +2630,7 @@ class TestPgPoolBatchRegressions:
         assert pool.active_connections == 3
 
     def test_cu2_81_sync_exhausted_pool_raises_not_spins(self, connection_params: dict) -> None:
-        """discogsography-cu2.81: an exhausted sync pool must raise after max_retries, not busy-spin.
+        """Regression: an exhausted sync pool must raise after max_retries, not busy-spin.
 
         When the queue is Empty and active_connections >= max_connections, no branch produced a
         connection or an exception, so retry_count never advanced and connection() spun a CPU core
@@ -2664,7 +2664,7 @@ class TestPgPoolBatchRegressions:
         assert "Failed to get PostgreSQL connection" in str(result.get("error"))
 
     def test_cu2_82_sync_conn_death_during_use_decrements(self, connection_params: dict) -> None:
-        """discogsography-cu2.82: a connection dying mid-use must decrement active_connections.
+        """Regression: a connection dying mid-use must decrement active_connections.
 
         The except (InterfaceError, OperationalError) block closed the connection and set conn=None
         before the finally block, so neither finally branch ran and the slot was leaked forever.

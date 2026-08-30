@@ -1,10 +1,14 @@
 """Tests for query_debug module."""
 
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -203,7 +207,7 @@ class TestLogSqlQuery:
 
 
 class TestSensitiveQueryRedaction:
-    """Test that credential-bearing queries have params redacted (discogsography-elsu)."""
+    """Test that credential-bearing queries have params redacted."""
 
     @pytest.mark.parametrize(
         "query",

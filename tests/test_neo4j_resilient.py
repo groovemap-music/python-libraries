@@ -130,7 +130,7 @@ class TestResilientNeo4jDriver:
 
     @patch("common.neo4j_resilient.GraphDatabase")
     def test_repeated_connection_test_failures_open_the_breaker(self, mock_graph_db: Mock, mock_driver: Mock) -> None:
-        """discogsography-4utz: a failed health-test must count as a circuit-
+        """Regression: a failed health-test must count as a circuit-
         breaker failure. _test_driver swallows real exceptions to a bare
         `False`, and the connection-establishment wrapper turns that into a
         typed `ConnectionEstablishmentError` (a `DatabaseUnavailableError`),
@@ -259,7 +259,7 @@ class TestAsyncResilientNeo4jDriver:
     @pytest.mark.asyncio
     @patch("common.neo4j_resilient.AsyncGraphDatabase")
     async def test_repeated_connection_test_failures_open_the_breaker(self, mock_async_graph_db: Mock, mock_async_driver: AsyncMock) -> None:
-        """discogsography-4utz (async twin): same guarantee as the sync driver —
+        """Async twin regression: same guarantee as the sync driver —
         repeated failed health checks must open the circuit."""
         # Real driver.session() raises — the ORIGINAL (unpatched) _test_driver
         # swallows it and returns False, exactly like a live outage would.
