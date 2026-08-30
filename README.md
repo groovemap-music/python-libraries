@@ -21,7 +21,7 @@ flowchart LR
     Runtime -. optional extra .-> Backend[Metrics / Neo4j / PostgreSQL / RabbitMQ]
 ```
 
-The supported interpreter is Python 3.13 or later; CI currently verifies Python 3.13. Neither
+The supported interpreter line is Python 3.14, pinned to Python 3.14.5 in CI. Neither
 distribution installs a console command. See the local package contracts for the complete
 [runtime API](docs/runtime.md), [agent-tools API](docs/agent-tools.md), and
 [compatibility and release policy](docs/compatibility-and-releases.md).
@@ -40,9 +40,9 @@ The stable local interface is `just setup`, `just check`, `just test`, and `just
 `just test-integration` additionally requires a live RabbitMQ service. `just audit` uses
 network vulnerability data and is intentionally separate from the pre-merge gate.
 
-Build artifacts are written to `dist/runtime` and `dist/agent-tools`. To prove that wheels
-work independently, run `just install-check`, which creates isolated temporary environments
-and imports both packages from their built wheels.
+Both distributions' wheels and source archives are written directly to `dist/`. To prove that
+the wheels work independently, run `just install-check`, which creates isolated temporary
+environments and imports both packages from their built wheels.
 
 ## License and history
 

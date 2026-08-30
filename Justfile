@@ -6,7 +6,10 @@ default:
 setup:
     uv sync --all-packages --all-extras --dev --frozen
 
-check: format-check lint typecheck test build install-check license-check secret-scan bump-preview
+# A clean checkout must provision the locked workspace before validation. In particular,
+# mypy follows imports into every supported optional integration, so validation needs the
+# same all-extras environment used by package and install checks.
+check: setup format-check lint typecheck test build install-check license-check secret-scan bump-preview
 
 format:
     uv run ruff format .

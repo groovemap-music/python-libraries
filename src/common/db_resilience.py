@@ -6,13 +6,16 @@ import inspect
 import logging
 import random
 import time
-from collections.abc import Callable
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from threading import Lock
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -317,7 +320,7 @@ class ResilientConnection[T]:
                 self._connection = None
 
 
-def _consume_task_exception(task: "asyncio.Task[Any]") -> None:
+def _consume_task_exception(task: asyncio.Task[Any]) -> None:
     """Retrieve a finished task's exception so asyncio does not warn about it."""
     if not task.cancelled():
         task.exception()

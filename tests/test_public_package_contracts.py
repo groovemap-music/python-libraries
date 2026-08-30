@@ -90,7 +90,7 @@ def test_distribution_and_console_entry_point_contracts() -> None:
 
     assert runtime["name"] == "groovemap-runtime"
     assert agent_tools["name"] == "groovemap-agent-tools"
-    assert runtime["requires-python"] == agent_tools["requires-python"] == ">=3.13"
+    assert runtime["requires-python"] == agent_tools["requires-python"] == ">=3.14,<3.15"
     assert runtime["version"] == agent_tools["version"]
     assert agent_tools["dependencies"] == [f"groovemap-runtime=={runtime['version']}"]
 
@@ -98,6 +98,51 @@ def test_distribution_and_console_entry_point_contracts() -> None:
         assert project.get("scripts", {}) == {}
         assert project.get("gui-scripts", {}) == {}
         assert project.get("entry-points", {}) == {}
+
+
+def test_documented_python_support_matches_the_pinned_ci_lane() -> None:
+    mise = _toml(".mise.toml")
+    lock = _toml("uv.lock")
+    runtime = _toml("pyproject.toml")
+    agent_tools = _toml("agent-tools/pyproject.toml")
+    active_docs = [
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "agent-tools/README.md",
+        REPO_ROOT / "docs/runtime.md",
+        REPO_ROOT / "docs/agent-tools.md",
+        REPO_ROOT / "docs/compatibility-and-releases.md",
+    ]
+
+    assert mise["tools"]["python"] == "3.14.5"
+    assert lock["requires-python"] == ">=3.14,<3.15"
+    for package in (runtime, agent_tools):
+        assert package["project"]["requires-python"] == ">=3.14,<3.15"
+        assert "Programming Language :: Python :: 3.14" in package["project"]["classifiers"]
+        assert "Programming Language :: Python :: 3.13" not in package["project"]["classifiers"]
+        assert package["tool"]["ruff"]["target-version"] == "py314"
+        assert package["tool"]["mypy"]["python_version"] == "3.14"
+
+    assert all("Python 3.14" in document.read_text() for document in active_docs)
+    assert all("CI currently verifies Python 3.13" not in document.read_text() for document in active_docs)
+    assert "Python 3.14 or later" not in (REPO_ROOT / "docs/compatibility-and-releases.md").read_text()
+
+
+def test_clean_checkout_validation_provisions_locked_optional_dependencies() -> None:
+    justfile = (REPO_ROOT / "Justfile").read_text()
+
+    assert "setup:" in justfile
+    assert "uv sync --all-packages --all-extras --dev --frozen" in justfile
+    assert re.search(r"^check: setup ", justfile, flags=re.MULTILINE)
+
+
+def test_readme_build_artifact_contract_matches_build_recipe() -> None:
+    justfile = (REPO_ROOT / "Justfile").read_text()
+    readme = (REPO_ROOT / "README.md").read_text()
+
+    assert "uv build --all-packages --out-dir dist --clear" in justfile
+    assert "written directly to `dist/`" in readme
+    assert "dist/runtime" not in readme
+    assert "dist/agent-tools" not in readme
 
 
 def test_contract_documentation_uses_resolving_local_links() -> None:

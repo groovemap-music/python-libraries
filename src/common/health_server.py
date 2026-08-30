@@ -2,11 +2,14 @@
 
 import json
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)

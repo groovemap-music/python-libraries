@@ -5,8 +5,7 @@ import contextlib
 import inspect
 import logging
 import re
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import aio_pika
@@ -22,6 +21,10 @@ from .db_resilience import (
     ExponentialBackoff,
     ResilientConnection,
 )
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)

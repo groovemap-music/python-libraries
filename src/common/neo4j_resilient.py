@@ -3,9 +3,8 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from neo4j import AsyncGraphDatabase, GraphDatabase
 from neo4j.exceptions import Neo4jError, ServiceUnavailable, SessionExpired
@@ -18,6 +17,10 @@ from .db_resilience import (
     ExponentialBackoff,
     ResilientConnection,
 )
+
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 logger = logging.getLogger(__name__)

@@ -82,7 +82,7 @@ def _coerce_port(value: str | None, default_port: int) -> int:
     """Parse a port string to int, falling back to default_port on anything invalid."""
     try:
         return int(str(value).strip())
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default_port
 
 
@@ -150,7 +150,7 @@ def _coerce_pool_size(value: str | None, default: int) -> int:
     """Parse a pool-size string to a positive int, falling back to default on anything invalid."""
     try:
         parsed = int(str(value).strip())
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
     return parsed if parsed >= 1 else default
 

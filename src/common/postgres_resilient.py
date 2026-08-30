@@ -5,10 +5,9 @@ import contextlib
 import logging
 import threading
 import time
-from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from queue import Empty, Full, Queue
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
 from psycopg.errors import DatabaseError, InterfaceError, OperationalError
@@ -21,6 +20,10 @@ from .db_resilience import (
     DatabaseUnavailableError,
     ExponentialBackoff,
 )
+
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Generator
 
 
 logger = logging.getLogger(__name__)
