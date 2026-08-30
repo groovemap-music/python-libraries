@@ -56,4 +56,4 @@ contains the provenance details.
 ## Documentation
 
 See the [documentation index](docs/README.md) for package contracts, compatibility, releases,
-migration authentication, and source-history provenance.
+migration authentication, consumer compatibility evidence, and source-history provenance.
