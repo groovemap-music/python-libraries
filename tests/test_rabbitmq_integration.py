@@ -210,7 +210,7 @@ class TestLiveReconnect:
                 OP_TIMEOUT,
             )
 
-            # discogsography-6ino: callbacks also fire on the INITIAL connect, so the
+            # Regression: callbacks also fire on the INITIAL connect, so the
             # flag is already set here. Clear it before dropping the connection —
             # otherwise the assertion below passes without a reconnect ever happening.
             reconnected.clear()

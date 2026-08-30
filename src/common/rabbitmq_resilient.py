@@ -281,8 +281,7 @@ class AsyncResilientRabbitMQ:
         reconnects, so :meth:`connect` early-returns and never re-runs its notify
         block. This hook is the ONLY place a caller-visible reconnect is observable,
         so it is where ``add_reconnect_callback`` subscribers have to be fired —
-        otherwise the API is a no-op exactly when re-registration is needed
-        (discogsography-6ino).
+        otherwise the API is a no-op exactly when re-registration is needed.
         """
         logger.info("🔄 RabbitMQ connection re-established")
         if self._lock is None:

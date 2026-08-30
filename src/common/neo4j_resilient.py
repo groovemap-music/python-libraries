@@ -168,7 +168,7 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
             self._lock = asyncio.Lock()
         async with self._lock:
             # Drivers replaced by a reconnect are closed on a grace timer; an
-            # explicit shutdown closes them now (discogsography-4ajv).
+            # explicit shutdown closes them now.
             await self._drain_deferred_closes()
             if self._connection:
                 try:

@@ -64,7 +64,7 @@ class TestCategorizeRole:
     def test_remix(self) -> None:
         assert categorize_role("Remix") == "engineering"
 
-    # ── discogsography-cu2.80: cross-category specificity ──────────────────
+    # ── Regression: cross-category specificity ──────────────────
     # Compound comma-joined credits that contain the generic "engineer"
     # fragment (declared in the "engineering" category) but are actually a
     # more specific mastering credit must resolve to "mastering", not

@@ -112,7 +112,7 @@ class HealthServer(ThreadingHTTPServer):
         listening socket. Only server_close() releases that file
         descriptor. Without it, stop()'s 'Stop the health server' contract
         is only half kept: the accept loop stops, but the socket FD stays
-        open for the rest of the process (discogsography-c4ag). Guarded in
+        open for the rest of the process. Guarded in
         a finally so a join() timeout still lets the socket close.
         """
         try:

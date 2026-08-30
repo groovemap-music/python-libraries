@@ -373,7 +373,7 @@ class TestAsyncResilientRabbitMQ:
 
     @pytest.mark.asyncio
     async def test_on_reconnect_invokes_registered_callbacks(self, connection_url: str) -> None:
-        """discogsography-6ino: _on_reconnect is the ONLY observable reconnect event.
+        """Regression: _on_reconnect is the ONLY observable reconnect event.
 
         RobustConnection reports is_closed == False across its own reconnects, so
         connect() early-returns and never re-runs its notify block. Subscribers to

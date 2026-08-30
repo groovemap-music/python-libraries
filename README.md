@@ -1,7 +1,7 @@
 # GrooveMap Python libraries
 
-Private, MIT-licensed Python libraries shared by GrooveMap services. This repository owns
-two independently buildable distributions with one synchronized version:
+MIT-licensed Python libraries shared by GrooveMap services. The `python-libraries`
+repository owns two independently buildable distributions with one synchronized version:
 
 | Distribution | Import surface | Responsibility |
 | --- | --- | --- |
@@ -9,9 +9,22 @@ two independently buildable distributions with one synchronized version:
 | `groovemap-agent-tools` | `common.agent_tools` | Framework-neutral catalog query tools used by the API and MCP server |
 
 The runtime's base install is dependency-light. Consumers select the `metrics`, `neo4j`,
-`postgres`, or `rabbitmq` extra they need; `all` is intended for development and validation.
-Service-specific configuration, OAuth, deployment policy, and extraction state are outside
-this repository's boundary.
+`postgres`, or `rabbitmq` extra they need. `all` is intended for development and validation.
+Service-specific behavior, OAuth, deployment policy, credentials, and extraction state remain
+the responsibility of each consuming application.
+
+```mermaid
+flowchart LR
+    Service[GrooveMap service] --> Runtime[groovemap-runtime]
+    API[catalog-api or mcp-server] --> Tools[groovemap-agent-tools]
+    Tools --> Runtime
+    Runtime -. optional extra .-> Backend[Metrics / Neo4j / PostgreSQL / RabbitMQ]
+```
+
+The supported interpreter is Python 3.13 or later; CI currently verifies Python 3.13. Neither
+distribution installs a console command. See the local package contracts for the complete
+[runtime API](docs/runtime.md), [agent-tools API](docs/agent-tools.md), and
+[compatibility and release policy](docs/compatibility-and-releases.md).
 
 ## Development
 
@@ -31,34 +44,14 @@ Build artifacts are written to `dist/runtime` and `dist/agent-tools`. To prove t
 work independently, run `just install-check`, which creates isolated temporary environments
 and imports both packages from their built wheels.
 
-## Versioning and releases
-
-PEP 621 package metadata is the version authority. Commitizen keeps the runtime and
-agent-tools versions synchronized and uses annotated `v$version` tags. `just bump-preview`
-calculates the next version and changelog without modifying the repository. `just bump`
-updates local metadata only; it does not tag, push, publish, or release.
-
-No registry publication is enabled during the migration. A later release design must use
-an approved OIDC trusted publisher or an equivalently narrow identity and must build from
-the reviewed version tag.
-
-## Consumer boundary
-
-Consumers pin a released version and immutable commit. Development linking is allowed only
-through an explicit local uv source; credentials must never appear in dependency URLs,
-manifests, lockfiles, Docker arguments, or image layers. See
-[private-package-auth.md](private-package-auth.md).
-
 ## License and history
 
-The current tree is licensed under the [MIT License](LICENSE). The repository was extracted
-from `SimplicityGuy/discogsography` by filtering `main` to `common/`, `tests/common/`,
-`tests/test_health_server.py`, and the historical root license, then promoting `common/` to
-the repository root and `tests/common/` to `tests/`. This retained 154 relevant commits.
-Historical license revisions remain available in Git history; the original monorepo remains
-unchanged.
+The current tree is licensed under the [MIT License](LICENSE). Its relevant source history was
+preserved during repository extraction. Historical license revisions remain available in Git;
+the source repository was not rewritten. The local [extraction record](docs/extraction.md)
+contains the provenance details.
 
 ## Documentation
 
-See the [documentation index](docs/README.md) for package boundaries, private dependency
-authentication, and source-history provenance.
+See the [documentation index](docs/README.md) for package contracts, compatibility, releases,
+migration authentication, and source-history provenance.

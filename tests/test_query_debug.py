@@ -203,7 +203,7 @@ class TestLogSqlQuery:
 
 
 class TestSensitiveQueryRedaction:
-    """Test that credential-bearing queries have params redacted (discogsography-elsu)."""
+    """Test that credential-bearing queries have params redacted."""
 
     @pytest.mark.parametrize(
         "query",
