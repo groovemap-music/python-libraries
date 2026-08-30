@@ -9,7 +9,7 @@ setup:
 # A clean checkout must provision the locked workspace before validation. In particular,
 # mypy follows imports into every supported optional integration, so validation needs the
 # same all-extras environment used by package and install checks.
-check: setup format-check lint typecheck test build install-check license-check secret-scan bump-preview
+check: setup format-check lint typecheck test automation-check build distribution-check install-check license-check secret-scan bump-preview
 
 format:
     uv run ruff format .
@@ -27,11 +27,17 @@ typecheck:
 test:
     uv run pytest -m "not integration" --cov=common --cov-report=term-missing --cov-report=xml
 
+coverage:
+    uv run pytest -m "not integration" --cov=common --cov-report=term-missing --cov-report=xml
+
 test-integration:
     uv run pytest -m integration
 
 build:
     uv build --all-packages --out-dir dist --clear
+
+distribution-check: build
+    uv run python scripts/check-distributions.py
 
 install-check: build
     bash scripts/install-check.sh
@@ -43,6 +49,10 @@ license-check:
 secret-scan:
     gitleaks git --redact --no-banner
     gitleaks dir . --redact --no-banner
+
+automation-check:
+    actionlint .github/workflows/*.yml
+    uv run python scripts/check-automation.py
 
 audit:
     uv run pip-audit

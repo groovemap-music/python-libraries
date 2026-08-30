@@ -42,7 +42,9 @@ network vulnerability data and is intentionally separate from the pre-merge gate
 
 Both distributions' wheels and source archives are written directly to `dist/`. To prove that
 the wheels work independently, run `just install-check`, which creates isolated temporary
-environments and imports both packages from their built wheels.
+environments and imports both packages from their built wheels. `just release-dry-run` also
+generates SHA-256 checksums, a CycloneDX SBOM, third-party notices, and commit-bound local
+provenance without publishing, tagging, or pushing anything.
 
 ## License and history
 
