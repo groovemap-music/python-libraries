@@ -57,6 +57,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/common"]
 
+[tool.hatch.build.targets.sdist]
+include = ["/LICENSE", "/README.md", "/src"]
+
 [tool.uv]
 exclude-newer = "2 days"
 

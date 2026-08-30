@@ -39,7 +39,9 @@ PEP 621 metadata in the root and `agent-tools/pyproject.toml` files is authorita
 keeps both versions synchronized.
 
 1. Run `just bump-preview` to calculate the next version and changelog without modifying files.
-2. Run `just check`, `just audit`, and `just release-dry-run` against the reviewed source.
+2. Run `just check`, `just audit`, and `just release-dry-run` against the reviewed source. The
+   dry run builds both package formats and records checksums, a CycloneDX SBOM, third-party
+   notices, and commit-bound local provenance in ignored `dist/` output.
 3. With separate approval, run `just bump` to update local version metadata and the changelog.
 4. Review and merge the version change.
 5. With separate release approval, create the annotated `v$version` tag from the reviewed commit.
