@@ -98,15 +98,21 @@ def validate_current_tree() -> dict[str, Any]:
 
     readme = (ROOT / "README.md").read_text()
     agent_readme = (ROOT / "agent-tools/README.md").read_text()
+    extraction = (ROOT / "docs/extraction.md").read_text()
     assert "GrooveMap Python libraries" in readme
     assert "GrooveMap" in agent_readme
     assert "discogsography" not in readme.casefold()
     assert "discogsography" not in agent_readme.casefold()
+    assert not re.search(r"(?:/Users|/home)/[A-Za-z0-9._-]+/", extraction)
+    assert extraction.casefold().count("discogsography") == 1
+    assert "https://github.com/SimplicityGuy/discogsography.git" in extraction
+    assert "204f49e2429f074546dfc67e6354be2529a983ac" in extraction
+    assert "28fa329702bc76896cc54ab8d05ec5b1bd3d929e" in extraction
 
     return {
         "active_identity": "GrooveMap Python libraries",
         "legacy_identity_matches": [],
-        "provenance_exception": "docs/extraction.md names the private source repository only as sanitized migration provenance",
+        "provenance_exception": "docs/extraction.md names the historical source URL once as sanitized migration provenance",
         "raw_private_planning_paths": [],
     }
 
