@@ -172,3 +172,15 @@ def test_active_contract_docs_use_groovemap_branding() -> None:
 
     assert all("discogsography" not in document.read_text().lower() for document in active_documents)
     assert all("GrooveMap" in document.read_text() or "groovemap" in document.read_text() for document in active_documents)
+
+
+def test_extraction_provenance_is_portable_and_historical() -> None:
+    extraction = (REPO_ROOT / "docs/extraction.md").read_text()
+
+    assert not re.search(r"(?:/Users|/home)/[A-Za-z0-9._-]+/", extraction)
+    assert extraction.lower().count("discogsography") == 1
+    assert "https://github.com/SimplicityGuy/discogsography.git" in extraction
+    assert "204f49e2429f074546dfc67e6354be2529a983ac" in extraction
+    assert "28fa329702bc76896cc54ab8d05ec5b1bd3d929e" in extraction
+    assert "SOURCE_CHECKOUT='../groovemap-source'" in extraction
+    assert "DESTINATION_CHECKOUT='../python-libraries'" in extraction
