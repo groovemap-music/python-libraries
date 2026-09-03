@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from opentelemetry.metrics import NoOpMeterProvider
+from opentelemetry.sdk.metrics import Meter as SdkMeter
 from opentelemetry.sdk.metrics import MeterProvider as SdkMeterProvider
 from opentelemetry.sdk.metrics.export import AggregationTemporality, MetricExporter, MetricExportResult
 
@@ -26,6 +27,7 @@ OTEL_ENVIRONMENT = (
     "OTEL_METRICS_EXPORTER",
     "OTEL_METRIC_EXPORT_INTERVAL",
     "OTEL_RESOURCE_ATTRIBUTES",
+    "OTEL_SDK_DISABLED",
     "OTEL_SERVICE_NAME",
 )
 EXPORTER_IMPORT_PATH = "opentelemetry.exporter.otlp.proto.http.metric_exporter"
@@ -224,18 +226,22 @@ def test_get_meter_records_through_the_configured_provider_and_shutdown_flushes(
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4318")
     # Keep the periodic push far away so the only export is the one shutdown forces.
     monkeypatch.setenv("OTEL_METRIC_EXPORT_INTERVAL", "600000")
-    telemetry.setup_telemetry("mcp-server", service_version="0.1.0")
+    provider = telemetry.setup_telemetry("mcp-server", service_version="0.1.0")
+    assert isinstance(provider, SdkMeterProvider), "the configured path must install the SDK provider"
 
     meter = telemetry.get_meter("common.telemetry", "0.1.0")
+    assert isinstance(meter, SdkMeter), "get_meter must hand back a recording meter, not a no-op one"
     meter.create_counter("groovemap.pipeline.messages").add(1, {"source": "discogs", "outcome": "processed"})
 
+    assert len(capturing_exporter) == 1
     exporter = capturing_exporter[0]
     assert exporter.exported == []
 
-    telemetry.shutdown_telemetry(timeout_s=2.0)
+    telemetry.shutdown_telemetry()
 
-    assert "groovemap.pipeline.messages" in _metric_names(exporter.exported)
+    assert exporter.flush_calls == 1
     assert exporter.shutdown_calls == 1
+    assert "groovemap.pipeline.messages" in _metric_names(exporter.exported)
     counter = exporter.exported[0].resource_metrics[0].scope_metrics[0].metrics[0]
     assert counter.data.aggregation_temporality == AggregationTemporality.CUMULATIVE
 
