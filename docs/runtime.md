@@ -22,8 +22,9 @@ from an implementation module, when a name appears here.
 | Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx` |
 
 These imports are lazy. Importing `common` does not load optional database, broker, metrics, or
-OpenTelemetry SDK clients until the corresponding capability is requested. Other names in `common.*` modules are
-implementation details or transitional service helpers and do not carry compatibility promises.
+OpenTelemetry clients until the corresponding capability is requested. Other names in `common.*`
+modules are implementation details or transitional service helpers and do not carry
+compatibility promises.
 In particular, a leading-underscore helper is private even if an existing GrooveMap service still
 imports it during migration.
 
@@ -32,9 +33,9 @@ imports it during migration.
 | Extra | Enables | Required for |
 | --- | --- | --- |
 | `metrics` | `prometheus-client` | Serving `/metrics` from `HealthServer` |
+| `neo4j` | Neo4j driver | Neo4j connection and retry helpers |
 | `otel` | OpenTelemetry API, SDK, and the OTLP HTTP/protobuf exporter | Recording and exporting metrics |
 | `otel-http` | FastAPI and httpx OpenTelemetry instrumentation | Instrumenting inbound and outbound HTTP |
-| `neo4j` | Neo4j driver | Neo4j connection and retry helpers |
 | `postgres` | Psycopg | PostgreSQL pools and query execution |
 | `rabbitmq` | aio-pika and pika | Async and synchronous broker resilience |
 | `all` | Every optional dependency | Development and full validation only |
