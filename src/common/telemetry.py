@@ -51,6 +51,11 @@ _lock = RLock()
 _provider: MeterProvider | None = None
 _sdk_provider: SdkMeterProvider | None = None
 
+# Bumped whenever the installed provider changes. Callers that cache instruments compare it
+# so instruments built against an earlier (usually no-op) provider are rebuilt rather than
+# silently dropping every measurement after a late setup_telemetry.
+_generation = 0
+
 
 def _configured_endpoint() -> str | None:
     """Return the configured OTLP endpoint, preferring the metrics-specific override."""
@@ -128,7 +133,7 @@ def setup_telemetry(service_name: str, *, service_version: str | None = None) ->
     Calling this twice is idempotent: the second call returns the provider the first installed
     without rebuilding an exporter. It never raises; any failure degrades to the no-op provider.
     """
-    global _provider, _sdk_provider
+    global _generation, _provider, _sdk_provider
 
     with _lock:
         if _provider is not None:
@@ -138,6 +143,7 @@ def setup_telemetry(service_name: str, *, service_version: str | None = None) ->
         if reason is not None:
             logger.info("📊 OpenTelemetry metrics disabled (%s) — keeping the no-op MeterProvider", reason)
             _provider = metrics.NoOpMeterProvider()
+            _generation += 1
             return _provider
 
         try:
@@ -147,10 +153,12 @@ def setup_telemetry(service_name: str, *, service_version: str | None = None) ->
             # degrade the service to no telemetry, never take its startup down with it.
             logger.warning("⚠️ OpenTelemetry metrics bootstrap failed — falling back to the no-op MeterProvider", exc_info=True)
             _provider = metrics.NoOpMeterProvider()
+            _generation += 1
             return _provider
 
         metrics.set_meter_provider(_sdk_provider)
         _provider = _sdk_provider
+        _generation += 1
         logger.info("📊 OpenTelemetry metrics configured for %r exporting to %s", service_name, _configured_endpoint())
         return _provider
 
@@ -164,6 +172,16 @@ def get_meter(name: str, version: str | None = None) -> Meter:
     return provider.get_meter(name, version)
 
 
+def provider_generation() -> int:
+    """Return a counter that changes whenever the installed provider is replaced.
+
+    Instrument caches compare this so a cache built before ``setup_telemetry`` — against the
+    no-op provider — is rebuilt instead of silently discarding every later measurement.
+    """
+    with _lock:
+        return _generation
+
+
 def shutdown_telemetry(timeout_s: float = 5.0) -> None:
     """Force-flush and shut down the installed provider so the last export lands.
 
@@ -171,12 +189,13 @@ def shutdown_telemetry(timeout_s: float = 5.0) -> None:
     everything recorded since its last push. Safe to call without a prior
     :func:`setup_telemetry`, safe to call twice, and never raises.
     """
-    global _provider, _sdk_provider
+    global _generation, _provider, _sdk_provider
 
     with _lock:
         provider = _sdk_provider
         _sdk_provider = None
         _provider = None
+        _generation += 1
 
     if provider is None:
         return

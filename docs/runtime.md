@@ -117,6 +117,26 @@ Behavior the consumer can rely on:
 Only metrics are configured today. Tracing is a deliberate non-goal of this boundary and would
 be added as a sibling provider built from the same resource.
 
+### Metrics the wrappers emit for free
+
+Once a service calls `setup_telemetry`, the resilience wrappers it already uses report these
+without any further code. Instruments are built lazily, so a service that never configures an
+endpoint pays only for one no-op instrument per metric.
+
+| Metric | Instrument | Attributes | Emitted by |
+| --- | --- | --- | --- |
+| `db.client.operation.duration` | histogram, seconds | `db.system.name`, `db.operation.name`, `error.type` on failure | PostgreSQL pools, Neo4j drivers, `execute_sql` |
+| `groovemap.pipeline.reconnects` | counter | `system` | every resilient connection wrapper, on each reconnect |
+| `groovemap.pipeline.circuit_breaker.state` | observable gauge | `system` | every live `CircuitBreaker`; 0 closed, 1 half-open, 2 open |
+| `messaging.client.consumed.messages` | counter | `messaging.system`, `messaging.destination.name`, `messaging.operation.name`, `error.type` on failure | `process_message_with_retry` |
+| `messaging.client.operation.duration` | histogram, seconds | same as the message counters | `process_message_with_retry` |
+
+`db.operation.name` is a short verb (`session`, `execute`). SQL and Cypher text, record ids, and
+hostnames are never attribute values. `CircuitBreakerConfig` takes an optional `system` label for
+the gauge; it defaults to the lowercased breaker `name`, so name a breaker after its backing
+system or set `system` explicitly. `ResilientConnection` and `AsyncResilientConnection` take the
+same optional `system` keyword for the reconnect counter.
+
 ## Compatibility boundary
 
 See the repository [compatibility and release policy](compatibility-and-releases.md). Public root

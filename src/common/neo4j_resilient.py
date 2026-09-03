@@ -4,10 +4,13 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from neo4j import AsyncGraphDatabase, GraphDatabase
 from neo4j.exceptions import Neo4jError, ServiceUnavailable, SessionExpired
+
+from common import runtime_metrics
 
 from .db_resilience import (
     AsyncResilientConnection,
@@ -45,6 +48,7 @@ class ResilientNeo4jDriver(ResilientConnection[Any]):
         circuit_breaker = CircuitBreaker(
             CircuitBreakerConfig(
                 name="Neo4j",
+                system="neo4j",
                 failure_threshold=3,
                 recovery_timeout=30,
                 expected_exception=(Neo4jError, ServiceUnavailable, SessionExpired, DatabaseUnavailableError),
@@ -61,6 +65,7 @@ class ResilientNeo4jDriver(ResilientConnection[Any]):
             backoff=backoff,
             max_retries=max_retries,
             name="Neo4j",
+            system="neo4j",
         )
 
         # Health check query
@@ -85,8 +90,16 @@ class ResilientNeo4jDriver(ResilientConnection[Any]):
 
     def session(self, **kwargs: Any) -> Any:
         """Get a Neo4j session with resilient connection."""
-        driver = self.get_connection()
-        return driver.session(**kwargs)
+        started = perf_counter()
+        error_type: str | None = None
+        try:
+            driver = self.get_connection()
+            return driver.session(**kwargs)
+        except Exception as exc:
+            error_type = runtime_metrics.error_type_of(exc)
+            raise
+        finally:
+            runtime_metrics.record_db_operation("neo4j", "session", perf_counter() - started, error_type)
 
     def close(self) -> None:
         """Close the Neo4j driver."""
@@ -120,6 +133,7 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
         circuit_breaker = CircuitBreaker(
             CircuitBreakerConfig(
                 name="AsyncNeo4j",
+                system="neo4j",
                 failure_threshold=3,
                 recovery_timeout=30,
                 expected_exception=(Neo4jError, ServiceUnavailable, SessionExpired, DatabaseUnavailableError),
@@ -136,6 +150,7 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
             backoff=backoff,
             max_retries=max_retries,
             name="AsyncNeo4j",
+            system="neo4j",
         )
 
         # Health check query
@@ -161,9 +176,17 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
     @asynccontextmanager
     async def session(self, **kwargs: Any) -> AsyncIterator[Any]:
         """Get an async Neo4j session with resilient connection."""
-        driver = await self.get_connection()
-        async with driver.session(**kwargs) as session:
-            yield session
+        started = perf_counter()
+        error_type: str | None = None
+        try:
+            driver = await self.get_connection()
+            async with driver.session(**kwargs) as session:
+                yield session
+        except Exception as exc:
+            error_type = runtime_metrics.error_type_of(exc)
+            raise
+        finally:
+            runtime_metrics.record_db_operation("neo4j", "session", perf_counter() - started, error_type)
 
     async def close(self) -> None:
         """Close the async Neo4j driver."""

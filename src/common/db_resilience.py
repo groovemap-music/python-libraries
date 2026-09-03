@@ -13,6 +13,8 @@ from enum import Enum
 from threading import Lock
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+from common import runtime_metrics
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -58,6 +60,10 @@ class CircuitBreakerConfig:
     recovery_timeout: int = 60  # Seconds before trying half-open
     expected_exception: type[Exception] | tuple[type[Exception], ...] = Exception
     name: str = "CircuitBreaker"
+    # Closed-set label for the backing system, reported as the `system` attribute of the
+    # circuit-breaker state gauge. `name` is a human-facing log prefix and may be anything;
+    # this must stay low-cardinality. Defaults to the lowercased name.
+    system: str | None = None
 
 
 class CircuitBreaker:
@@ -70,6 +76,8 @@ class CircuitBreaker:
         self.state = CircuitState.CLOSED
         self._lock = Lock()
         self._async_lock: asyncio.Lock | None = None
+        self.system = config.system or config.name.lower()
+        runtime_metrics.register_circuit_breaker(self)
 
     def call(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         """Execute function with circuit breaker protection."""
@@ -238,6 +246,7 @@ class ResilientConnection[T]:
         backoff: ExponentialBackoff | None = None,
         max_retries: int = 3,
         name: str = "Connection",
+        system: str | None = None,
     ):
         self.connection_factory = connection_factory
         self.connection_test = connection_test
@@ -245,6 +254,9 @@ class ResilientConnection[T]:
         self.backoff = backoff or ExponentialBackoff()
         self.max_retries = max_retries
         self.name = name
+        # Closed-set metric attribute for this wrapper's backing system; falls back to the
+        # display name so an unlabelled subclass still reports something stable.
+        self.system = system or name.lower()
         self._connection: T | None = None
         self._lock = Lock()
 
@@ -288,6 +300,7 @@ class ResilientConnection[T]:
                         return conn
 
                     self._connection = self.circuit_breaker.call(create_connection)
+                    runtime_metrics.record_reconnect(self.system)
                     logger.info(f"✅ {self.name}: Connection established successfully")
                     return self._connection
 
@@ -341,6 +354,7 @@ class AsyncResilientConnection[T]:
         unhealthy_threshold: int = 3,
         close_grace_period: float = 30.0,
         reconnect_cooldown: float = 5.0,
+        system: str | None = None,
     ):
         self.connection_factory = connection_factory
         self.connection_test = connection_test
@@ -348,6 +362,9 @@ class AsyncResilientConnection[T]:
         self.backoff = backoff or ExponentialBackoff()
         self.max_retries = max_retries
         self.name = name
+        # Closed-set metric attribute for this wrapper's backing system; falls back to the
+        # display name so an unlabelled subclass still reports something stable.
+        self.system = system or name.lower()
         # Seconds a successful health probe is trusted before re-probing.
         self.health_check_ttl = health_check_ttl
         # Consecutive failed probes required before a live connection is replaced.
@@ -564,6 +581,7 @@ class AsyncResilientConnection[T]:
                     self._failed_probes = 0
                     self._last_failure_at = None
                     self._last_failure_error = None
+                runtime_metrics.record_reconnect(self.system)
                 logger.info(f"✅ {self.name}: Connection established successfully")
                 return cast("T", conn)
 

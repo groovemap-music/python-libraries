@@ -141,7 +141,9 @@ def test_setup_installs_a_periodic_otlp_reader_over_the_configured_endpoint(
 
     assert isinstance(provider, SdkMeterProvider)
     assert len(capturing_exporter) == 1
-    reader = provider._all_metric_readers.copy().pop()
+    # _all_metric_readers is a class-level registry shared by every provider in the process;
+    # only _metric_readers is this provider's own.
+    (reader,) = provider._metric_readers
     assert reader._exporter is capturing_exporter[0]
     assert reader._export_interval_millis == 600000
 
