@@ -55,6 +55,7 @@ def collector(monkeypatch: pytest.MonkeyPatch) -> Iterator[Collector]:
     """Make the helpers bind to an in-memory provider instead of the global one."""
     active = Collector()
     monkeypatch.setattr(telemetry, "_provider", active.provider)
+    assert telemetry._active_provider() is active.provider
     yield active
     monkeypatch.setattr(telemetry, "_provider", None)
 

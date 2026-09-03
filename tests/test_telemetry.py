@@ -21,15 +21,6 @@ if TYPE_CHECKING:
     from opentelemetry.sdk.metrics.export import MetricsData
 
 
-OTEL_ENVIRONMENT = (
-    "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-    "OTEL_METRICS_EXPORTER",
-    "OTEL_METRIC_EXPORT_INTERVAL",
-    "OTEL_RESOURCE_ATTRIBUTES",
-    "OTEL_SDK_DISABLED",
-    "OTEL_SERVICE_NAME",
-)
 EXPORTER_IMPORT_PATH = "opentelemetry.exporter.otlp.proto.http.metric_exporter"
 
 
@@ -56,9 +47,7 @@ class CapturingExporter(MetricExporter):
 
 @pytest.fixture(autouse=True)
 def isolated_telemetry(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Give every test a pristine, environment-free telemetry module."""
-    for name in OTEL_ENVIRONMENT:
-        monkeypatch.delenv(name, raising=False)
+    """Give every test a pristine telemetry module; conftest clears the environment."""
     monkeypatch.setattr(telemetry, "_provider", None)
     monkeypatch.setattr(telemetry, "_sdk_provider", None)
     yield

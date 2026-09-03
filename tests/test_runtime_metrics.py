@@ -70,6 +70,7 @@ def collector(monkeypatch: pytest.MonkeyPatch) -> Iterator[Collector]:
     monkeypatch.setattr(telemetry, "_provider", active.provider)
     monkeypatch.setattr(telemetry, "_generation", telemetry.provider_generation() + 1)
     runtime_metrics.reset_instruments()
+    assert telemetry._active_provider() is active.provider
     yield active
     monkeypatch.setattr(telemetry, "_provider", None)
     runtime_metrics.reset_instruments()

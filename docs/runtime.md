@@ -95,6 +95,7 @@ variables:
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector base URL, for example `http://otel-collector:4318` | unset, which disables export |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Metrics-only endpoint override | falls back to `OTEL_EXPORTER_OTLP_ENDPOINT` |
 | `OTEL_METRICS_EXPORTER` | `otlp` or `none` | `otlp` |
+| `OTEL_SDK_DISABLED` | `true` makes the SDK itself a no-op, so nothing is recorded even when an endpoint is set | `false` |
 | `OTEL_METRIC_EXPORT_INTERVAL` | Push interval in milliseconds | SDK default |
 | `OTEL_SERVICE_NAME` | `service.name`, overriding the `service_name` argument | the `service_name` argument |
 | `OTEL_RESOURCE_ATTRIBUTES` | Extra resource attributes, for example `service.namespace=groovemap,deployment.environment.name=dev` | empty |
