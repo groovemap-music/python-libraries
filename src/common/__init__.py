@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL, ResilientPostgreSQLPool
     from common.query_debug import execute_sql, is_db_profiling, is_debug, log_cypher_query, log_sql_query
     from common.rabbitmq_resilient import AsyncResilientRabbitMQ, ResilientRabbitMQConnection, process_message_with_retry
-    from common.telemetry import get_meter, setup_telemetry, shutdown_telemetry
+    from common.telemetry import get_meter, instrument_fastapi_app, instrument_httpx, setup_telemetry, shutdown_telemetry
 
 
 _EXPORTS: dict[str, tuple[str, str]] = {
@@ -68,6 +68,8 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ResilientRabbitMQConnection": ("common.rabbitmq_resilient", "ResilientRabbitMQConnection"),
     "process_message_with_retry": ("common.rabbitmq_resilient", "process_message_with_retry"),
     "get_meter": ("common.telemetry", "get_meter"),
+    "instrument_fastapi_app": ("common.telemetry", "instrument_fastapi_app"),
+    "instrument_httpx": ("common.telemetry", "instrument_httpx"),
     "setup_telemetry": ("common.telemetry", "setup_telemetry"),
     "shutdown_telemetry": ("common.telemetry", "shutdown_telemetry"),
 }

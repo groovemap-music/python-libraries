@@ -24,9 +24,9 @@ the only signal.
 import logging
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
-from os import getenv
+from os import environ, getenv
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import metrics
 
@@ -41,6 +41,17 @@ logger = logging.getLogger(__name__)
 
 # The single value of OTEL_METRICS_EXPORTER that means "collect nothing".
 _EXPORTER_DISABLED = "none"
+
+# Probe endpoints are excluded by default: they are polled constantly and would otherwise
+# dominate the request histogram without telling an operator anything.
+DEFAULT_EXCLUDED_URLS = "health,ready,metrics"
+
+# The contrib HTTP instrumentations still default to the pre-stable metric names
+# (http.server.duration in milliseconds). GrooveMap dashboards are written against the stable
+# semantic conventions, so opt in unless an operator has already chosen a value. This is a
+# standard OpenTelemetry environment variable, not a GrooveMap-specific one.
+_SEMCONV_STABILITY_OPT_IN = "OTEL_SEMCONV_STABILITY_OPT_IN"
+_STABLE_HTTP_SEMCONV = "http"
 
 # Guards the module-level provider handles so concurrent service startup paths cannot install
 # two providers, and so shutdown cannot observe a half-built one.
@@ -172,6 +183,25 @@ def get_meter(name: str, version: str | None = None) -> Meter:
     return provider.get_meter(name, version)
 
 
+def _opt_in_to_stable_http_semconv() -> None:
+    """Default the HTTP instrumentations to the stable metric names.
+
+    The contrib packages read this once, the first time an instrumentation initializes, so it
+    has to be set before the first ``instrument_*`` call. An explicit operator value wins; a
+    blank value counts as unset, because a compose file that declares the variable without a
+    value would otherwise silently pin the pre-stable metric names.
+    """
+    if not (environ.get(_SEMCONV_STABILITY_OPT_IN) or "").strip():
+        environ[_SEMCONV_STABILITY_OPT_IN] = _STABLE_HTTP_SEMCONV
+
+
+def _active_provider() -> MeterProvider:
+    """Return the provider third-party instrumentation should report through."""
+    with _lock:
+        provider = _provider
+    return provider if provider is not None else metrics.get_meter_provider()
+
+
 def provider_generation() -> int:
     """Return a counter that changes whenever the installed provider is replaced.
 
@@ -209,3 +239,57 @@ def shutdown_telemetry(timeout_s: float = 5.0) -> None:
         provider.shutdown(timeout_millis=timeout_millis)
     except Exception:
         logger.warning("⚠️ OpenTelemetry metrics provider shutdown failed", exc_info=True)
+
+
+def instrument_fastapi_app(app: Any, *, excluded_urls: str = DEFAULT_EXCLUDED_URLS) -> bool:
+    """Emit `http.server.*` metrics for a FastAPI app. Returns whether it was instrumented.
+
+    Routes are reported by their templated path (``/artists/{artist_id}``), never the raw one,
+    so `http.route` stays low-cardinality. ``excluded_urls`` is the contrib comma-separated
+    pattern list and defaults to the probe endpoints, which would otherwise dominate the
+    request histogram.
+
+    Safe to call without the ``otel-http`` extra: it logs once and returns False. Safe to call
+    before ``setup_telemetry``, in which case the app reports through the no-op provider.
+    """
+    _opt_in_to_stable_http_semconv()
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: PLC0415
+    except ImportError:
+        logger.info("📊 FastAPI instrumentation unavailable (install the 'otel-http' extra) — serving without HTTP metrics")
+        return False
+
+    try:
+        FastAPIInstrumentor.instrument_app(app, meter_provider=_active_provider(), excluded_urls=excluded_urls)
+    except Exception:
+        logger.warning("⚠️ Could not instrument the FastAPI app — serving without HTTP metrics", exc_info=True)
+        return False
+    return True
+
+
+def instrument_httpx(client: Any = None) -> bool:
+    """Emit `http.client.*` metrics for httpx. Returns whether instrumentation was applied.
+
+    With a client, only that client is instrumented; with None, every httpx client created in
+    this process is. Metrics carry `server.address` and the response status code, never the
+    full URL.
+
+    Safe to call without the ``otel-http`` extra: it logs once and returns False.
+    """
+    _opt_in_to_stable_http_semconv()
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor  # noqa: PLC0415
+    except ImportError:
+        logger.info("📊 httpx instrumentation unavailable (install the 'otel-http' extra) — calling peers without HTTP metrics")
+        return False
+
+    provider = _active_provider()
+    try:
+        if client is None:
+            HTTPXClientInstrumentor().instrument(meter_provider=provider)
+        else:
+            HTTPXClientInstrumentor.instrument_client(client, meter_provider=provider)
+    except Exception:
+        logger.warning("⚠️ Could not instrument httpx — calling peers without HTTP metrics", exc_info=True)
+        return False
+    return True

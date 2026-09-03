@@ -19,7 +19,7 @@ from an implementation module, when a name appears here.
 | PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL`, `ResilientPostgreSQLPool` |
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
 | RabbitMQ | `AsyncResilientRabbitMQ`, `ResilientRabbitMQConnection`, `process_message_with_retry` |
-| Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter` |
+| Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx` |
 
 These imports are lazy. Importing `common` does not load optional database, broker, metrics, or
 OpenTelemetry SDK clients until the corresponding capability is requested. Other names in `common.*` modules are
@@ -116,6 +116,27 @@ Behavior the consumer can rely on:
 
 Only metrics are configured today. Tracing is a deliberate non-goal of this boundary and would
 be added as a sibling provider built from the same resource.
+
+### HTTP instrumentation
+
+`instrument_fastapi_app(app, *, excluded_urls="health,ready,metrics")` emits
+`http.server.request.duration` with `http.route` and `http.response.status_code`. The route is
+the templated path (`/artists/{artist_id}`), never the raw one, so the attribute stays
+low-cardinality; `/health` and `/ready` are excluded by default because probes would otherwise
+dominate the histogram.
+
+`instrument_httpx(client=None)` emits `http.client.request.duration` with `server.address` and
+the response status code. Pass a client to instrument only that client, or nothing to
+instrument every httpx client in the process.
+
+Both need the `otel-http` extra. Without it each returns `False` after logging one line, so a
+service that has not installed the extra still starts and serves normally. Both return `True`
+when instrumentation was applied. Call them after `setup_telemetry` so they bind to the
+configured provider.
+
+Both default `OTEL_SEMCONV_STABILITY_OPT_IN` to `http` before the first instrumentation
+initializes. The contrib packages otherwise emit the pre-stable names (`http.server.duration`
+in milliseconds). An operator value wins; a blank value counts as unset.
 
 ### Metrics the wrappers emit for free
 

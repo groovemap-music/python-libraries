@@ -35,6 +35,8 @@ RUNTIME_EXPORTS = {
     "describe_exception",
     "execute_sql",
     "get_meter",
+    "instrument_fastapi_app",
+    "instrument_httpx",
     "is_db_profiling",
     "is_debug",
     "log_cypher_query",
