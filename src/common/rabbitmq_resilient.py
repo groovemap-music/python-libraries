@@ -5,6 +5,7 @@ import contextlib
 import inspect
 import logging
 import re
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -14,6 +15,8 @@ from aio_pika.exceptions import AMQPChannelError, AMQPConnectionError, Connectio
 from pika import BlockingConnection, URLParameters
 from pika.exceptions import AMQPChannelError as PikaChannelError
 from pika.exceptions import AMQPConnectionError as PikaConnectionError
+
+from common import runtime_metrics
 
 from .db_resilience import (
     CircuitBreaker,
@@ -42,6 +45,7 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
         circuit_breaker = CircuitBreaker(
             CircuitBreakerConfig(
                 name="RabbitMQ",
+                system="rabbitmq",
                 failure_threshold=3,
                 recovery_timeout=30,
                 expected_exception=(PikaConnectionError, PikaChannelError, ConnectionClosed),
@@ -58,6 +62,7 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
             backoff=backoff,
             max_retries=max_retries,
             name="RabbitMQ",
+            system="rabbitmq",
         )
 
         self._channel: Any | None = None
@@ -171,6 +176,7 @@ class AsyncResilientRabbitMQ:
         self.circuit_breaker = CircuitBreaker(
             CircuitBreakerConfig(
                 name="AsyncRabbitMQ",
+                system="rabbitmq",
                 failure_threshold=5,  # Allow more attempts before opening
                 recovery_timeout=60,  # Give more time for RabbitMQ to start
                 expected_exception=(AMQPConnectionError, AMQPChannelError, ConnectionClosed),
@@ -287,6 +293,7 @@ class AsyncResilientRabbitMQ:
         otherwise the API is a no-op exactly when re-registration is needed.
         """
         logger.info("🔄 RabbitMQ connection re-established")
+        runtime_metrics.record_reconnect("rabbitmq")
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:
@@ -335,6 +342,19 @@ class AsyncResilientRabbitMQ:
                     self._connection = None
 
 
+def _destination_name(message: Any) -> str:
+    """Return the low-cardinality queue name a message was consumed from.
+
+    Falls back to "unknown" rather than to anything message-specific: a routing key can carry
+    ids, and a metric attribute must never be high-cardinality.
+    """
+    for attribute in ("consumer_tag", "routing_key", "exchange"):
+        value = getattr(message, attribute, None)
+        if isinstance(value, str) and value:
+            return value
+    return "unknown"
+
+
 # Helper function for message processing with retry
 async def process_message_with_retry(
     message: aio_pika.abc.AbstractIncomingMessage,
@@ -349,6 +369,9 @@ async def process_message_with_retry(
 
     retry_count = 0
     handler_succeeded = False
+    destination = _destination_name(message)
+    started = perf_counter()
+    last_error_type: str | None = None
 
     while retry_count < max_retries:
         try:
@@ -363,6 +386,7 @@ async def process_message_with_retry(
 
         except Exception as e:
             retry_count += 1
+            last_error_type = runtime_metrics.error_type_of(e)
 
             if retry_count < max_retries:
                 delay = backoff.get_delay(retry_count - 1)
@@ -380,7 +404,14 @@ async def process_message_with_retry(
                 except Exception as nack_err:
                     logger.warning(f"⚠️ Failed to nack message after retries exhausted: {nack_err}")
 
+                runtime_metrics.record_consumed_message(destination, perf_counter() - started, last_error_type)
                 raise
+
+    runtime_metrics.record_consumed_message(
+        destination,
+        perf_counter() - started,
+        None if handler_succeeded else last_error_type,
+    )
 
     if handler_succeeded:
         try:

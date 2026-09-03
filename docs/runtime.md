@@ -19,10 +19,12 @@ from an implementation module, when a name appears here.
 | PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL`, `ResilientPostgreSQLPool` |
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
 | RabbitMQ | `AsyncResilientRabbitMQ`, `ResilientRabbitMQConnection`, `process_message_with_retry` |
+| Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx` |
 
-These imports are lazy. Importing `common` does not load optional database, broker, or metrics
-clients until the corresponding capability is requested. Other names in `common.*` modules are
-implementation details or transitional service helpers and do not carry compatibility promises.
+These imports are lazy. Importing `common` does not load optional database, broker, metrics, or
+OpenTelemetry clients until the corresponding capability is requested. Other names in `common.*`
+modules are implementation details or transitional service helpers and do not carry
+compatibility promises.
 In particular, a leading-underscore helper is private even if an existing GrooveMap service still
 imports it during migration.
 
@@ -32,13 +34,18 @@ imports it during migration.
 | --- | --- | --- |
 | `metrics` | `prometheus-client` | Serving `/metrics` from `HealthServer` |
 | `neo4j` | Neo4j driver | Neo4j connection and retry helpers |
+| `otel` | OpenTelemetry API, SDK, and the OTLP HTTP/protobuf exporter | Recording and exporting metrics |
+| `otel-http` | FastAPI and httpx OpenTelemetry instrumentation | Instrumenting inbound and outbound HTTP |
 | `postgres` | Psycopg | PostgreSQL pools and query execution |
 | `rabbitmq` | aio-pika and pika | Async and synchronous broker resilience |
 | `all` | Every optional dependency | Development and full validation only |
 
 Consumers should install only the extras they use, for example
-`groovemap-runtime[postgres,metrics]`. The base package includes structured logging and record
-normalization.
+`groovemap-runtime[postgres,otel]`. The base package includes structured logging and record
+normalization only. No OpenTelemetry package is a base dependency: `common` imports and runs
+with none installed, and every instrument is a local no-op until the `otel` extra is present.
+That keeps an existing consumer working against its current lockfile, which pins this library's
+base dependencies and would otherwise be missing a newly added one at runtime.
 
 ## Configuration boundary
 
@@ -71,6 +78,89 @@ repository-local `docs/emoji-guide.md` path.
 The consumer owns metric registration, port selection, startup, and shutdown. It must call
 `start_background()` and `stop()` as part of its own lifecycle. The library does not start a
 server during import and does not create application-specific metrics.
+
+## Telemetry boundary
+
+`setup_telemetry(service_name, *, service_version=None)` installs one process-wide
+`MeterProvider` and returns it. `shutdown_telemetry(timeout_s=5.0)` force-flushes and shuts it
+down. `get_meter(name, version=None)` returns a meter for registering instruments. The library
+configures transport and resource only; every metric is registered by its consumer.
+
+Metrics are pushed over OTLP HTTP/protobuf. The runtime never exposes a Prometheus scrape
+endpoint for OpenTelemetry metrics, and reads only standard OpenTelemetry environment
+variables:
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector base URL, for example `http://otel-collector:4318` | unset, which disables export |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Metrics-only endpoint override | falls back to `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `OTEL_METRICS_EXPORTER` | `otlp` or `none` | `otlp` |
+| `OTEL_SDK_DISABLED` | `true` makes the SDK itself a no-op, so nothing is recorded even when an endpoint is set | `false` |
+| `OTEL_METRIC_EXPORT_INTERVAL` | Push interval in milliseconds | SDK default |
+| `OTEL_SERVICE_NAME` | `service.name`, overriding the `service_name` argument | the `service_name` argument |
+| `OTEL_RESOURCE_ATTRIBUTES` | Extra resource attributes, for example `service.namespace=groovemap,deployment.environment.name=dev` | empty |
+
+Behavior the consumer can rely on:
+
+- Telemetry never fails startup. A missing endpoint, `OTEL_METRICS_EXPORTER=none`, an absent
+  `otel` extra, or a malformed configuration all fall back to a no-op `MeterProvider` and log
+  one line instead of raising. Without the extra the fallback is a local stand-in, so nothing
+  in `common` requires an `opentelemetry` package to be installed at all.
+- `setup_telemetry` is idempotent. A second call returns the provider the first installed
+  without building a second exporter.
+- Environment wins over code. `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` override the
+  `service.name` and `service.version` the bootstrap derives from its arguments.
+- `service_version` defaults to the version of an installed distribution named `service_name`;
+  a service whose deployment name differs from its distribution name should pass it
+  explicitly, and the attribute is omitted when neither resolves.
+- Export temporality is cumulative, so a Prometheus-backed collector reads counters correctly.
+- One-shot processes must call `shutdown_telemetry` before exiting or the periodic reader drops
+  everything recorded since its last push. It is safe without a prior `setup_telemetry`, safe
+  to call twice, and never raises.
+
+Only metrics are configured today. Tracing is a deliberate non-goal of this boundary and would
+be added as a sibling provider built from the same resource.
+
+### HTTP instrumentation
+
+`instrument_fastapi_app(app, *, excluded_urls="health,ready,metrics")` emits
+`http.server.request.duration` with `http.route` and `http.response.status_code`. The route is
+the templated path (`/artists/{artist_id}`), never the raw one, so the attribute stays
+low-cardinality; `/health` and `/ready` are excluded by default because probes would otherwise
+dominate the histogram.
+
+`instrument_httpx(client=None)` emits `http.client.request.duration` with `server.address` and
+the response status code. Pass a client to instrument only that client, or nothing to
+instrument every httpx client in the process.
+
+Both need the `otel-http` extra. Without it each returns `False` after logging one line, so a
+service that has not installed the extra still starts and serves normally. Both return `True`
+when instrumentation was applied. Call them after `setup_telemetry` so they bind to the
+configured provider.
+
+Both default `OTEL_SEMCONV_STABILITY_OPT_IN` to `http` before the first instrumentation
+initializes. The contrib packages otherwise emit the pre-stable names (`http.server.duration`
+in milliseconds). An operator value wins; a blank value counts as unset.
+
+### Metrics the wrappers emit for free
+
+Once a service calls `setup_telemetry`, the resilience wrappers it already uses report these
+without any further code. Instruments are built lazily, so a service that never configures an
+endpoint pays only for one no-op instrument per metric.
+
+| Metric | Instrument | Attributes | Emitted by |
+| --- | --- | --- | --- |
+| `db.client.operation.duration` | histogram, seconds | `db.system.name`, `db.operation.name`, `error.type` on failure | PostgreSQL pools, Neo4j drivers, `execute_sql` |
+| `groovemap.pipeline.reconnects` | counter | `system` | every resilient connection wrapper, on each reconnect |
+| `groovemap.pipeline.circuit_breaker.state` | observable gauge | `system` | every live `CircuitBreaker`; 0 closed, 1 half-open, 2 open |
+| `messaging.client.consumed.messages` | counter | `messaging.system`, `messaging.destination.name`, `messaging.operation.name`, `error.type` on failure | `process_message_with_retry` |
+| `messaging.client.operation.duration` | histogram, seconds | same as the message counters | `process_message_with_retry` |
+
+`db.operation.name` is a short verb (`session`, `execute`). SQL and Cypher text, record ids, and
+hostnames are never attribute values. `CircuitBreakerConfig` takes an optional `system` label for
+the gauge; it defaults to the lowercased breaker `name`, so name a breaker after its backing
+system or set `system` explicitly. `ResilientConnection` and `AsyncResilientConnection` take the
+same optional `system` keyword for the reconnect counter.
 
 ## Compatibility boundary
 

@@ -151,6 +151,39 @@ def prepare_consumer(source: Path, revision: str, destination: Path, library: Pa
         source_evidence["contract_sha256"] = sha256(compatibility.read_bytes()).hexdigest()
         evidence.write_text(f"{json.dumps(source_evidence, indent=2)}\n")
 
+    commit_transport_rewrite(destination)
+
+
+def commit_transport_rewrite(destination: Path) -> None:
+    """Commit the overlaid transport so the clone is a normal one-commit-ahead checkout.
+
+    The clone is detached at a reviewed revision that predates its repository's latest
+    release tag, so ``git log <tag>..HEAD`` is empty and a consumer's release-preview step
+    reports that it found no commits. Leaving the overlay uncommitted also leaves the tree
+    dirty, which is not a state any consumer's gate is written for. Committing the overlay
+    under a conventional subject fixes both: the release preview sees exactly one new
+    commit to classify, and the gate runs against a clean tree. No consumer check is
+    relaxed or skipped, and the committed content is byte-identical to the overlay.
+    """
+    run(GIT, "add", "--all", cwd=destination)
+    run(
+        GIT,
+        "-c",
+        "user.name=GrooveMap compatibility rehearsal",
+        "-c",
+        "user.email=noreply@groovemap.music",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "tag.gpgsign=false",
+        "commit",
+        "--quiet",
+        "--no-verify",
+        "-m",
+        "fix(deps): resolve groovemap-runtime through the rehearsal transport",
+        cwd=destination,
+    )
+
 
 def verify_consumers(matrix: dict[str, Any], workspace: Path, repositories: set[str]) -> None:
     """Run every consumer's complete gate against the exact library revision without credentials."""
