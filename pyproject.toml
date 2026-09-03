@@ -21,6 +21,7 @@ classifiers = [
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
+    "opentelemetry-api>=1.40.0",
     "orjson>=3.12.0",
     "structlog>=26.1.0",
 ]
@@ -28,9 +29,21 @@ dependencies = [
 [project.optional-dependencies]
 metrics = ["prometheus-client>=0.26.0"]
 neo4j = ["neo4j-rust-ext>=6.2.0.0"]
+otel = ["opentelemetry-exporter-otlp-proto-http>=1.40.0", "opentelemetry-sdk>=1.40.0"]
+otel-http = ["opentelemetry-instrumentation-fastapi>=0.61b0", "opentelemetry-instrumentation-httpx>=0.61b0"]
 postgres = ["psycopg[binary]>=3.3.4"]
 rabbitmq = ["aio-pika>=10.0.1", "pika>=1.4.4"]
-all = ["aio-pika>=10.0.1", "neo4j-rust-ext>=6.2.0.0", "pika>=1.4.4", "prometheus-client>=0.26.0", "psycopg[binary]>=3.3.4"]
+all = [
+    "aio-pika>=10.0.1",
+    "neo4j-rust-ext>=6.2.0.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.40.0",
+    "opentelemetry-instrumentation-fastapi>=0.61b0",
+    "opentelemetry-instrumentation-httpx>=0.61b0",
+    "opentelemetry-sdk>=1.40.0",
+    "pika>=1.4.4",
+    "prometheus-client>=0.26.0",
+    "psycopg[binary]>=3.3.4",
+]
 
 [project.urls]
 Homepage = "https://groovemap.music"

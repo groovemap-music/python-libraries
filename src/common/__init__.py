@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL, ResilientPostgreSQLPool
     from common.query_debug import execute_sql, is_db_profiling, is_debug, log_cypher_query, log_sql_query
     from common.rabbitmq_resilient import AsyncResilientRabbitMQ, ResilientRabbitMQConnection, process_message_with_retry
+    from common.telemetry import get_meter, setup_telemetry, shutdown_telemetry
 
 
 _EXPORTS: dict[str, tuple[str, str]] = {
@@ -66,6 +67,9 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "AsyncResilientRabbitMQ": ("common.rabbitmq_resilient", "AsyncResilientRabbitMQ"),
     "ResilientRabbitMQConnection": ("common.rabbitmq_resilient", "ResilientRabbitMQConnection"),
     "process_message_with_retry": ("common.rabbitmq_resilient", "process_message_with_retry"),
+    "get_meter": ("common.telemetry", "get_meter"),
+    "setup_telemetry": ("common.telemetry", "setup_telemetry"),
+    "shutdown_telemetry": ("common.telemetry", "shutdown_telemetry"),
 }
 
 __all__ = sorted(_EXPORTS)
