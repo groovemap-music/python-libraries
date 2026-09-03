@@ -7,6 +7,9 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_EXPORTS = {
@@ -31,6 +34,9 @@ RUNTIME_EXPORTS = {
     "async_resilient_connection",
     "describe_exception",
     "execute_sql",
+    "get_meter",
+    "instrument_fastapi_app",
+    "instrument_httpx",
     "is_db_profiling",
     "is_debug",
     "log_cypher_query",
@@ -41,6 +47,8 @@ RUNTIME_EXPORTS = {
     "process_message_with_retry",
     "resilient_connection",
     "setup_logging",
+    "setup_telemetry",
+    "shutdown_telemetry",
     "with_async_neo4j_retry",
     "with_neo4j_retry",
 }
@@ -114,7 +122,12 @@ def test_documented_python_support_matches_the_pinned_ci_lane() -> None:
     ]
 
     assert mise["tools"]["python"] == "3.14.5"
-    assert lock["requires-python"] == ">=3.14,<3.15"
+    # uv normalizes the lock's requires-python (">=3.14,<3.15" becomes "==3.14.*"), so the lock
+    # is checked for the interpreter window it admits rather than for one spelling of it.
+    locked_python = SpecifierSet(lock["requires-python"])
+    assert Version("3.14.5") in locked_python
+    assert Version("3.13.9") not in locked_python
+    assert Version("3.15.0") not in locked_python
     for package in (runtime, agent_tools):
         assert package["project"]["requires-python"] == ">=3.14,<3.15"
         assert "Programming Language :: Python :: 3.14" in package["project"]["classifiers"]
@@ -184,3 +197,19 @@ def test_extraction_provenance_is_portable_and_historical() -> None:
     assert "28fa329702bc76896cc54ab8d05ec5b1bd3d929e" in extraction
     assert "SOURCE_CHECKOUT='../groovemap-source'" in extraction
     assert "DESTINATION_CHECKOUT='../python-libraries'" in extraction
+
+
+def test_library_sources_avoid_syntax_newer_than_consumer_type_checkers() -> None:
+    """Consumers type-check the installed library source, and not all of them target 3.14 yet.
+
+    PEP 758's parenthesis-free ``except A, B:`` is a syntax error for anything older, so it
+    reaches a consumer as a failing `just check` rather than as a lint finding here.
+    """
+    bare_multi_except = re.compile(r"^\s*except\s+[A-Za-z_][\w.]*\s*,", flags=re.MULTILINE)
+    offenders = [
+        source.relative_to(REPO_ROOT)
+        for source in [*(REPO_ROOT / "src").rglob("*.py"), *(REPO_ROOT / "agent-tools/src").rglob("*.py")]
+        if bare_multi_except.search(source.read_text())
+    ]
+
+    assert not offenders, f"parenthesize the exception tuple in: {offenders}"

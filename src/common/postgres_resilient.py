@@ -7,10 +7,13 @@ import threading
 import time
 from contextlib import asynccontextmanager, contextmanager
 from queue import Empty, Full, Queue
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
 from psycopg.errors import DatabaseError, InterfaceError, OperationalError
+
+from common import runtime_metrics
 
 from .db_resilience import (
     AsyncResilientConnection,
@@ -56,6 +59,7 @@ class ResilientPostgreSQLPool:
         self.circuit_breaker = CircuitBreaker(
             CircuitBreakerConfig(
                 name="PostgreSQL",
+                system="postgresql",
                 failure_threshold=3,
                 recovery_timeout=30,
                 expected_exception=(DatabaseError, InterfaceError, OperationalError, DatabaseUnavailableError),
@@ -187,6 +191,20 @@ class ResilientPostgreSQLPool:
 
     @contextmanager
     def connection(self) -> Generator[psycopg.Connection[Any]]:
+        """Get a connection from the pool, timing the whole checkout-to-return span."""
+        started = perf_counter()
+        error_type: str | None = None
+        try:
+            with self._pooled_connection() as conn:
+                yield conn
+        except Exception as exc:
+            error_type = runtime_metrics.error_type_of(exc)
+            raise
+        finally:
+            runtime_metrics.record_db_operation("postgresql", "session", perf_counter() - started, error_type)
+
+    @contextmanager
+    def _pooled_connection(self) -> Generator[psycopg.Connection[Any]]:
         """Get a connection from the pool with retry logic."""
         if self._closed:
             raise RuntimeError("Connection pool is closed")
@@ -322,6 +340,7 @@ class AsyncResilientPostgreSQL(AsyncResilientConnection[Any]):
         circuit_breaker = CircuitBreaker(
             CircuitBreakerConfig(
                 name="AsyncPostgreSQL",
+                system="postgresql",
                 failure_threshold=3,
                 recovery_timeout=30,
                 expected_exception=(DatabaseError, InterfaceError, OperationalError, DatabaseUnavailableError),
@@ -338,6 +357,7 @@ class AsyncResilientPostgreSQL(AsyncResilientConnection[Any]):
             backoff=backoff,
             max_retries=max_retries,
             name="AsyncPostgreSQL",
+            system="postgresql",
         )
 
     async def _create_connection(self) -> Any:
@@ -400,6 +420,7 @@ class AsyncPostgreSQLPool:
         self.circuit_breaker = CircuitBreaker(
             CircuitBreakerConfig(
                 name="AsyncPostgreSQL",
+                system="postgresql",
                 failure_threshold=3,
                 recovery_timeout=30,
                 expected_exception=(DatabaseError, InterfaceError, OperationalError, DatabaseUnavailableError),
@@ -574,6 +595,20 @@ class AsyncPostgreSQLPool:
 
     @asynccontextmanager
     async def connection(self) -> AsyncIterator[psycopg.AsyncConnection[Any]]:
+        """Get a connection from the pool, timing the whole checkout-to-return span."""
+        started = perf_counter()
+        error_type: str | None = None
+        try:
+            async with self._pooled_connection() as conn:
+                yield conn
+        except Exception as exc:
+            error_type = runtime_metrics.error_type_of(exc)
+            raise
+        finally:
+            runtime_metrics.record_db_operation("postgresql", "session", perf_counter() - started, error_type)
+
+    @asynccontextmanager
+    async def _pooled_connection(self) -> AsyncIterator[psycopg.AsyncConnection[Any]]:
         """Get a connection from the pool with retry logic."""
         if self._closed:
             raise RuntimeError("Connection pool is closed")

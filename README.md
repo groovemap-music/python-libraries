@@ -9,7 +9,8 @@ repository owns two independently buildable distributions with one synchronized 
 | `groovemap-agent-tools` | `common.agent_tools` | Framework-neutral catalog query tools used by the API and MCP server |
 
 The runtime's base install is dependency-light. Consumers select the `metrics`, `neo4j`,
-`postgres`, or `rabbitmq` extra they need. `all` is intended for development and validation.
+`otel`, `otel-http`, `postgres`, or `rabbitmq` extra they need. `all` is intended for
+development and validation.
 Service-specific behavior, OAuth, deployment policy, credentials, and extraction state remain
 the responsibility of each consuming application.
 
@@ -18,7 +19,7 @@ flowchart LR
     Service[GrooveMap service] --> Runtime[groovemap-runtime]
     API[catalog-api or mcp-server] --> Tools[groovemap-agent-tools]
     Tools --> Runtime
-    Runtime -. optional extra .-> Backend[Metrics / Neo4j / PostgreSQL / RabbitMQ]
+    Runtime -. optional extra .-> Backend[Metrics / Neo4j / OpenTelemetry / PostgreSQL / RabbitMQ]
 ```
 
 The supported interpreter line is Python 3.14, pinned to Python 3.14.5 in CI. Neither

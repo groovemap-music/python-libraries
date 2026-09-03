@@ -8,7 +8,15 @@ library commit.
 
 The rehearsal changes only the Git transport inside a disposable clone. It replaces the public
 HTTPS repository URL with a local Git URL, preserving the exact commit, package names, extras,
-lockfile shape, and full consumer validation command. This separates package compatibility from
+lockfile shape, and full consumer validation command.
+
+The overlay is committed inside the disposable clone under a conventional subject before the
+consumer gate runs. A reviewed consumer revision generally predates its own repository's latest
+release tag, so a detached checkout of it has an empty `<tag>..HEAD` range and a consumer's
+release-preview step reports that it found no commits; an uncommitted overlay also leaves the
+tree dirty, which is not a state any consumer gate is written for. Committing the overlay gives
+the release preview exactly one new commit to classify and gives the gate a clean tree. The
+committed content is byte-identical to the overlay, and no consumer check is relaxed or skipped. This separates package compatibility from
 the repository's current private visibility and makes the result reproducible before publication.
 The repository-local distribution gate also installs both built wheels in clean environments
 without any GitHub credential.
