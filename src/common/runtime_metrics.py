@@ -59,8 +59,11 @@ def _observe_circuit_breakers(_options: CallbackOptions) -> Iterator[Observation
     for breaker in list(_breakers):
         try:
             value = _CIRCUIT_STATE_VALUES[breaker.state.value]
-        except AttributeError, KeyError:  # pragma: no cover - defensive
-            continue
+        except (AttributeError, KeyError):  # fmt: skip
+            # Keep the parenthesized form until every consumer's type checker targets Python
+            # 3.14; PEP 758's bare form is a syntax error for anything older, and consumers
+            # type-check the installed library source.
+            continue  # pragma: no cover - defensive
         yield Observation(value, {"system": breaker.system})
 
 

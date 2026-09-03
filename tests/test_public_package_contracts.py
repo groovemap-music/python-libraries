@@ -197,3 +197,19 @@ def test_extraction_provenance_is_portable_and_historical() -> None:
     assert "28fa329702bc76896cc54ab8d05ec5b1bd3d929e" in extraction
     assert "SOURCE_CHECKOUT='../groovemap-source'" in extraction
     assert "DESTINATION_CHECKOUT='../python-libraries'" in extraction
+
+
+def test_library_sources_avoid_syntax_newer_than_consumer_type_checkers() -> None:
+    """Consumers type-check the installed library source, and not all of them target 3.14 yet.
+
+    PEP 758's parenthesis-free ``except A, B:`` is a syntax error for anything older, so it
+    reaches a consumer as a failing `just check` rather than as a lint finding here.
+    """
+    bare_multi_except = re.compile(r"^\s*except\s+[A-Za-z_][\w.]*\s*,", flags=re.MULTILINE)
+    offenders = [
+        source.relative_to(REPO_ROOT)
+        for source in [*(REPO_ROOT / "src").rglob("*.py"), *(REPO_ROOT / "agent-tools/src").rglob("*.py")]
+        if bare_multi_except.search(source.read_text())
+    ]
+
+    assert not offenders, f"parenthesize the exception tuple in: {offenders}"
