@@ -302,3 +302,55 @@ def test_public_names_are_exported_lazily_from_common() -> None:
     assert common.setup_telemetry is telemetry.setup_telemetry
     assert common.shutdown_telemetry is telemetry.shutdown_telemetry
     assert common.get_meter is telemetry.get_meter
+
+
+def test_the_module_works_with_no_opentelemetry_package_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A consumer on an older lockfile resolves this library without the `otel` extra.
+
+    Nothing in `common` may require an `opentelemetry` package to import or to record.
+    """
+    monkeypatch.setattr(telemetry, "metrics", None)
+    monkeypatch.setitem(sys.modules, EXPORTER_IMPORT_PATH, None)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4318")
+
+    provider = telemetry.setup_telemetry("dashboard")
+
+    assert isinstance(provider, telemetry._NoOpMeterProvider)
+    meter = telemetry.get_meter("groovemap.runtime")
+    meter.create_counter("groovemap.pipeline.messages").add(1, {"source": "discogs"})
+    meter.create_histogram("groovemap.pipeline.message.duration", unit="s").record(0.5, {"source": "discogs"})
+    meter.create_observable_gauge("groovemap.pipeline.circuit_breaker.state", callbacks=[lambda _o: []])
+    telemetry.shutdown_telemetry()
+
+
+def test_get_meter_without_the_api_returns_a_usable_no_op_meter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(telemetry, "metrics", None)
+
+    meter = telemetry.get_meter("groovemap.runtime")
+
+    assert isinstance(meter, telemetry._NoOpMeter)
+    assert meter.create_up_down_counter("groovemap.pipeline.consumers.active").add(1) is None
+    assert meter.create_gauge("groovemap.extraction.file.progress").record(0.5) is None
+
+
+def test_the_resilience_wrappers_record_without_the_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    """runtime_metrics is imported at module scope by db_resilience, so it must degrade too."""
+    from common import runtime_metrics
+
+    monkeypatch.setattr(telemetry, "metrics", None)
+    monkeypatch.setattr(telemetry, "_provider", None)
+    runtime_metrics.reset_instruments()
+    try:
+        runtime_metrics.record_db_operation("postgresql", "session", 0.1)
+        runtime_metrics.record_reconnect("rabbitmq")
+        runtime_metrics.record_consumed_message("discogs-releases", 0.2)
+        runtime_metrics.record_sent_message("graphinator", 0.2)
+    finally:
+        runtime_metrics.reset_instruments()
+
+
+def test_http_helpers_bind_to_the_no_op_provider_without_the_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(telemetry, "metrics", None)
+    monkeypatch.setattr(telemetry, "_provider", None)
+
+    assert isinstance(telemetry._active_provider(), telemetry._NoOpMeterProvider)

@@ -32,7 +32,7 @@ imports it during migration.
 | Extra | Enables | Required for |
 | --- | --- | --- |
 | `metrics` | `prometheus-client` | Serving `/metrics` from `HealthServer` |
-| `otel` | OpenTelemetry SDK and the OTLP HTTP/protobuf exporter | Exporting metrics from `setup_telemetry` |
+| `otel` | OpenTelemetry API, SDK, and the OTLP HTTP/protobuf exporter | Recording and exporting metrics |
 | `otel-http` | FastAPI and httpx OpenTelemetry instrumentation | Instrumenting inbound and outbound HTTP |
 | `neo4j` | Neo4j driver | Neo4j connection and retry helpers |
 | `postgres` | Psycopg | PostgreSQL pools and query execution |
@@ -40,10 +40,11 @@ imports it during migration.
 | `all` | Every optional dependency | Development and full validation only |
 
 Consumers should install only the extras they use, for example
-`groovemap-runtime[postgres,otel]`. The base package includes structured logging, record
-normalization, and the OpenTelemetry **API** — the API alone is a small pure-Python dependency
-and is what supplies working no-op instruments when the `otel` extra is absent. The SDK, the
-exporter, and their protobuf dependency arrive only with the extra.
+`groovemap-runtime[postgres,otel]`. The base package includes structured logging and record
+normalization only. No OpenTelemetry package is a base dependency: `common` imports and runs
+with none installed, and every instrument is a local no-op until the `otel` extra is present.
+That keeps an existing consumer working against its current lockfile, which pins this library's
+base dependencies and would otherwise be missing a newly added one at runtime.
 
 ## Configuration boundary
 
@@ -100,8 +101,9 @@ variables:
 Behavior the consumer can rely on:
 
 - Telemetry never fails startup. A missing endpoint, `OTEL_METRICS_EXPORTER=none`, an absent
-  `otel` extra, or a malformed configuration all fall back to the API no-op `MeterProvider`
-  and log one line instead of raising.
+  `otel` extra, or a malformed configuration all fall back to a no-op `MeterProvider` and log
+  one line instead of raising. Without the extra the fallback is a local stand-in, so nothing
+  in `common` requires an `opentelemetry` package to be installed at all.
 - `setup_telemetry` is idempotent. A second call returns the provider the first installed
   without building a second exporter.
 - Environment wins over code. `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` override the

@@ -14,7 +14,9 @@ endpoint. Configuration is read from the standard OpenTelemetry environment vari
   bootstrap derives from its arguments.
 
 Telemetry never fails startup: a missing ``otel`` extra, a missing endpoint, or a broken SDK
-configuration all fall back to the API no-op ``MeterProvider`` and log instead of raising.
+configuration all fall back to a no-op ``MeterProvider`` and log instead of raising. The whole
+module imports and works without any ``opentelemetry`` package installed, because a consumer
+pinned to an older lockfile resolves this library without the extra.
 
 Only metrics are configured here. Tracing would be added as a sibling ``TracerProvider`` built
 from the same resource in :func:`_build_resource`; nothing in this module assumes metrics are
@@ -26,9 +28,20 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from os import environ, getenv
 from threading import RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from opentelemetry import metrics
+
+try:
+    from opentelemetry import metrics as _metrics_api
+except ImportError:  # pragma: no cover - covered by the no-op shim tests
+    # The OpenTelemetry API ships with the `otel` extra, not with the base package. A consumer
+    # pinned to an older lockfile resolves this library without it, and `common` must keep
+    # importing and working there: every instrument simply becomes a local no-op.
+    _metrics_api = None  # type: ignore[assignment]
+
+# Deliberately untyped: mypy runs with the extra installed and would otherwise prove every
+# `metrics is None` guard unreachable, which is exactly the case this module has to handle.
+metrics: Any = _metrics_api
 
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -53,6 +66,57 @@ DEFAULT_EXCLUDED_URLS = "health,ready,metrics"
 _SEMCONV_STABILITY_OPT_IN = "OTEL_SEMCONV_STABILITY_OPT_IN"
 _STABLE_HTTP_SEMCONV = "http"
 
+
+class _NoOpInstrument:
+    """Accepts and discards every measurement, for installs without the `otel` extra."""
+
+    def add(self, amount: float, attributes: Any = None, context: Any = None) -> None:
+        """Discard a counter measurement."""
+
+    def record(self, amount: float, attributes: Any = None, context: Any = None) -> None:
+        """Discard a histogram or gauge measurement."""
+
+
+class _NoOpMeter:
+    """Hands out no-op instruments so callers need no availability checks of their own."""
+
+    def create_counter(self, name: str, unit: str = "", description: str = "") -> _NoOpInstrument:  # noqa: ARG002
+        """Return a discarding counter."""
+        return _NoOpInstrument()
+
+    def create_up_down_counter(self, name: str, unit: str = "", description: str = "") -> _NoOpInstrument:  # noqa: ARG002
+        """Return a discarding up-down counter."""
+        return _NoOpInstrument()
+
+    def create_histogram(self, name: str, unit: str = "", description: str = "", **_kwargs: Any) -> _NoOpInstrument:  # noqa: ARG002
+        """Return a discarding histogram."""
+        return _NoOpInstrument()
+
+    def create_gauge(self, name: str, unit: str = "", description: str = "") -> _NoOpInstrument:  # noqa: ARG002
+        """Return a discarding gauge."""
+        return _NoOpInstrument()
+
+    def create_observable_gauge(self, name: str, callbacks: Any = None, unit: str = "", description: str = "") -> _NoOpInstrument:  # noqa: ARG002
+        """Return a discarding observable gauge; its callbacks are never invoked."""
+        return _NoOpInstrument()
+
+    def create_observable_counter(self, name: str, callbacks: Any = None, unit: str = "", description: str = "") -> _NoOpInstrument:  # noqa: ARG002
+        """Return a discarding observable counter."""
+        return _NoOpInstrument()
+
+    def create_observable_up_down_counter(self, name: str, callbacks: Any = None, unit: str = "", description: str = "") -> _NoOpInstrument:  # noqa: ARG002
+        """Return a discarding observable up-down counter."""
+        return _NoOpInstrument()
+
+
+class _NoOpMeterProvider:
+    """Stand-in for the API's NoOpMeterProvider when the API itself is not installed."""
+
+    def get_meter(self, name: str, version: str | None = None, schema_url: str | None = None) -> _NoOpMeter:  # noqa: ARG002
+        """Return the no-op meter."""
+        return _NoOpMeter()
+
+
 # Guards the module-level provider handles so concurrent service startup paths cannot install
 # two providers, and so shutdown cannot observe a half-built one.
 _lock = RLock()
@@ -66,6 +130,13 @@ _sdk_provider: SdkMeterProvider | None = None
 # so instruments built against an earlier (usually no-op) provider are rebuilt rather than
 # silently dropping every measurement after a late setup_telemetry.
 _generation = 0
+
+
+def _noop_provider() -> MeterProvider:
+    """Return the no-op provider: the API's when installed, otherwise the local stand-in."""
+    if metrics is None:
+        return cast("MeterProvider", _NoOpMeterProvider())
+    return cast("MeterProvider", metrics.NoOpMeterProvider())
 
 
 def _configured_endpoint() -> str | None:
@@ -153,7 +224,7 @@ def setup_telemetry(service_name: str, *, service_version: str | None = None) ->
         reason = _disabled_reason()
         if reason is not None:
             logger.info("📊 OpenTelemetry metrics disabled (%s) — keeping the no-op MeterProvider", reason)
-            _provider = metrics.NoOpMeterProvider()
+            _provider = _noop_provider()
             _generation += 1
             return _provider
 
@@ -163,11 +234,12 @@ def setup_telemetry(service_name: str, *, service_version: str | None = None) ->
             # A missing `otel` extra, an unreachable collector, or a malformed env var must
             # degrade the service to no telemetry, never take its startup down with it.
             logger.warning("⚠️ OpenTelemetry metrics bootstrap failed — falling back to the no-op MeterProvider", exc_info=True)
-            _provider = metrics.NoOpMeterProvider()
+            _provider = _noop_provider()
             _generation += 1
             return _provider
 
-        metrics.set_meter_provider(_sdk_provider)
+        if metrics is not None:
+            metrics.set_meter_provider(_sdk_provider)
         _provider = _sdk_provider
         _generation += 1
         logger.info("📊 OpenTelemetry metrics configured for %r exporting to %s", service_name, _configured_endpoint())
@@ -179,7 +251,7 @@ def get_meter(name: str, version: str | None = None) -> Meter:
     with _lock:
         provider = _provider
     if provider is None:
-        provider = metrics.get_meter_provider()
+        provider = _noop_provider() if metrics is None else cast("MeterProvider", metrics.get_meter_provider())
     return provider.get_meter(name, version)
 
 
@@ -199,7 +271,9 @@ def _active_provider() -> MeterProvider:
     """Return the provider third-party instrumentation should report through."""
     with _lock:
         provider = _provider
-    return provider if provider is not None else metrics.get_meter_provider()
+    if provider is not None:
+        return provider
+    return _noop_provider() if metrics is None else cast("MeterProvider", metrics.get_meter_provider())
 
 
 def provider_generation() -> int:
