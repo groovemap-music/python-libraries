@@ -9,7 +9,7 @@ setup:
 # A clean checkout must provision the locked workspace before validation. In particular,
 # mypy follows imports into every supported optional integration, so validation needs the
 # same all-extras environment used by package and install checks.
-check: setup format-check lint typecheck test automation-check consumer-matrix-check publication-readiness-check build distribution-check install-check license-check secret-scan bump-preview
+check: setup format-check lint typecheck test automation-check consumer-matrix-check publication-readiness-check media-taxonomy-check build distribution-check install-check license-check secret-scan bump-preview
 
 format:
     uv run ruff format .
@@ -59,6 +59,11 @@ consumer-matrix-check:
 
 publication-readiness-check:
     uv run python scripts/attest-publication-readiness.py --check
+
+# Fails if the vendored media taxonomy drifts from the digest recorded in source.json,
+# or if either file is missing. See ADR 0007 in the design repository.
+media-taxonomy-check:
+    uv run python scripts/check-media-taxonomy.py
 
 audit:
     uv run pip-audit

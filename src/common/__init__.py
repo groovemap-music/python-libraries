@@ -25,6 +25,15 @@ if TYPE_CHECKING:
     )
     from common.errors import describe_exception
     from common.health_server import HealthServer
+    from common.media import (
+        families_of,
+        family_ids,
+        legacy_format_names_to_media,
+        map_discogs_formats,
+        map_musicbrainz_release,
+        medium_ids,
+        medium_label,
+    )
     from common.neo4j_resilient import AsyncResilientNeo4jDriver, ResilientNeo4jDriver, with_async_neo4j_retry, with_neo4j_retry
     from common.outage_backoff import OutageBackoff
     from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL, ResilientPostgreSQLPool
@@ -51,6 +60,13 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "resilient_connection": ("common.db_resilience", "resilient_connection"),
     "describe_exception": ("common.errors", "describe_exception"),
     "HealthServer": ("common.health_server", "HealthServer"),
+    "families_of": ("common.media", "families_of"),
+    "family_ids": ("common.media", "family_ids"),
+    "legacy_format_names_to_media": ("common.media", "legacy_format_names_to_media"),
+    "map_discogs_formats": ("common.media", "map_discogs_formats"),
+    "map_musicbrainz_release": ("common.media", "map_musicbrainz_release"),
+    "medium_ids": ("common.media", "medium_ids"),
+    "medium_label": ("common.media", "medium_label"),
     "AsyncResilientNeo4jDriver": ("common.neo4j_resilient", "AsyncResilientNeo4jDriver"),
     "ResilientNeo4jDriver": ("common.neo4j_resilient", "ResilientNeo4jDriver"),
     "with_async_neo4j_retry": ("common.neo4j_resilient", "with_async_neo4j_retry"),

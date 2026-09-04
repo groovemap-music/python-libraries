@@ -38,3 +38,24 @@ async def test_entity_details_returns_error_when_not_found() -> None:
     handler = AsyncMock(return_value=None)
     result = await get_artist_details(driver=driver, name="Nobody", handler=handler)
     assert result == {"error": "artist 'Nobody' not found"}
+
+
+@pytest.mark.asyncio
+async def test_get_release_details_passes_through_the_canonical_media_block() -> None:
+    from common.agent_tools.entities import get_release_details, media_of
+    from common.media import map_discogs_formats
+
+    block = map_discogs_formats([{"name": "Vinyl", "qty": "2", "descriptions": ["LP", "Album"]}])
+    handler = AsyncMock(return_value={"id": "1", "name": "Autobahn", "media": block})
+
+    result = await get_release_details(driver=AsyncMock(), name="Autobahn", handler=handler)
+
+    assert result["media"] == block
+    assert media_of(result) == block
+
+
+def test_media_of_answers_none_for_a_release_stored_before_the_block_existed() -> None:
+    from common.agent_tools.entities import media_of
+
+    assert media_of({"id": "1", "name": "Autobahn"}) is None
+    assert media_of({"id": "1", "media": "Vinyl"}) is None
