@@ -1,0 +1,1654 @@
+{
+  "taxonomy_version": "1",
+  "license": "MIT",
+  "families": [
+    {
+      "id": "vinyl",
+      "label": "Vinyl",
+      "physical": true,
+      "grooved": true,
+      "resolve": {
+        "attribute": "size_inches",
+        "map": {
+          "7": "vinyl_7",
+          "10": "vinyl_10",
+          "12": "vinyl_12"
+        }
+      }
+    },
+    {
+      "id": "shellac",
+      "label": "Shellac",
+      "physical": true,
+      "grooved": true,
+      "resolve": {
+        "attribute": "size_inches",
+        "map": {
+          "7": "shellac_7",
+          "10": "shellac_10",
+          "12": "shellac_12"
+        }
+      }
+    },
+    {
+      "id": "grooved_other",
+      "label": "Other grooved media",
+      "physical": true,
+      "grooved": true,
+      "resolve": null
+    },
+    {
+      "id": "tape",
+      "label": "Tape",
+      "physical": true,
+      "grooved": false,
+      "resolve": null
+    },
+    {
+      "id": "optical",
+      "label": "Optical disc",
+      "physical": true,
+      "grooved": false,
+      "resolve": null
+    },
+    {
+      "id": "digital",
+      "label": "Digital",
+      "physical": false,
+      "grooved": false,
+      "resolve": null
+    },
+    {
+      "id": "video",
+      "label": "Video",
+      "physical": true,
+      "grooved": false,
+      "resolve": null
+    },
+    {
+      "id": "other",
+      "label": "Other",
+      "physical": true,
+      "grooved": false,
+      "resolve": null
+    }
+  ],
+  "media": [
+    {
+      "id": "vinyl_7",
+      "family": "vinyl",
+      "label": "7\" vinyl",
+      "defaults": {
+        "size_inches": 7
+      }
+    },
+    {
+      "id": "vinyl_10",
+      "family": "vinyl",
+      "label": "10\" vinyl",
+      "defaults": {
+        "size_inches": 10
+      }
+    },
+    {
+      "id": "vinyl_12",
+      "family": "vinyl",
+      "label": "12\" vinyl",
+      "defaults": {
+        "size_inches": 12
+      }
+    },
+    {
+      "id": "vinyl_unspecified",
+      "family": "vinyl",
+      "label": "Vinyl",
+      "defaults": {}
+    },
+    {
+      "id": "shellac_7",
+      "family": "shellac",
+      "label": "7\" shellac",
+      "defaults": {
+        "size_inches": 7,
+        "speed_rpm": 78
+      }
+    },
+    {
+      "id": "shellac_10",
+      "family": "shellac",
+      "label": "10\" shellac",
+      "defaults": {
+        "size_inches": 10,
+        "speed_rpm": 78
+      }
+    },
+    {
+      "id": "shellac_12",
+      "family": "shellac",
+      "label": "12\" shellac",
+      "defaults": {
+        "size_inches": 12,
+        "speed_rpm": 78
+      }
+    },
+    {
+      "id": "shellac_unspecified",
+      "family": "shellac",
+      "label": "Shellac",
+      "defaults": {
+        "speed_rpm": 78
+      }
+    },
+    {
+      "id": "grooved_acetate",
+      "family": "grooved_other",
+      "label": "Acetate",
+      "defaults": {}
+    },
+    {
+      "id": "grooved_lathe_cut",
+      "family": "grooved_other",
+      "label": "Lathe cut",
+      "defaults": {}
+    },
+    {
+      "id": "grooved_flexi_disc",
+      "family": "grooved_other",
+      "label": "Flexi disc",
+      "defaults": {}
+    },
+    {
+      "id": "grooved_cylinder",
+      "family": "grooved_other",
+      "label": "Cylinder",
+      "defaults": {}
+    },
+    {
+      "id": "grooved_edison_disc",
+      "family": "grooved_other",
+      "label": "Edison Diamond Disc",
+      "defaults": {}
+    },
+    {
+      "id": "grooved_pathe_disc",
+      "family": "grooved_other",
+      "label": "Pathé disc",
+      "defaults": {}
+    },
+    {
+      "id": "grooved_piano_roll",
+      "family": "grooved_other",
+      "label": "Piano roll",
+      "defaults": {}
+    },
+    {
+      "id": "grooved_other_unspecified",
+      "family": "grooved_other",
+      "label": "Other grooved medium",
+      "defaults": {}
+    },
+    {
+      "id": "tape_cassette",
+      "family": "tape",
+      "label": "Cassette",
+      "defaults": {}
+    },
+    {
+      "id": "tape_microcassette",
+      "family": "tape",
+      "label": "Microcassette",
+      "defaults": {}
+    },
+    {
+      "id": "tape_reel_to_reel",
+      "family": "tape",
+      "label": "Reel-to-reel",
+      "defaults": {}
+    },
+    {
+      "id": "tape_8_track",
+      "family": "tape",
+      "label": "8-track cartridge",
+      "defaults": {}
+    },
+    {
+      "id": "tape_4_track",
+      "family": "tape",
+      "label": "4-track cartridge",
+      "defaults": {}
+    },
+    {
+      "id": "tape_playtape",
+      "family": "tape",
+      "label": "PlayTape",
+      "defaults": {}
+    },
+    {
+      "id": "tape_dat",
+      "family": "tape",
+      "label": "DAT",
+      "defaults": {}
+    },
+    {
+      "id": "tape_dcc",
+      "family": "tape",
+      "label": "DCC",
+      "defaults": {}
+    },
+    {
+      "id": "tape_elcaset",
+      "family": "tape",
+      "label": "Elcaset",
+      "defaults": {}
+    },
+    {
+      "id": "tape_unspecified",
+      "family": "tape",
+      "label": "Tape",
+      "defaults": {}
+    },
+    {
+      "id": "optical_cd",
+      "family": "optical",
+      "label": "CD",
+      "defaults": {}
+    },
+    {
+      "id": "optical_cdr",
+      "family": "optical",
+      "label": "CD-R",
+      "defaults": {}
+    },
+    {
+      "id": "optical_sacd",
+      "family": "optical",
+      "label": "SACD",
+      "defaults": {}
+    },
+    {
+      "id": "optical_dvd_audio",
+      "family": "optical",
+      "label": "DVD-Audio",
+      "defaults": {}
+    },
+    {
+      "id": "optical_minidisc",
+      "family": "optical",
+      "label": "MiniDisc",
+      "defaults": {}
+    },
+    {
+      "id": "optical_dualdisc",
+      "family": "optical",
+      "label": "DualDisc",
+      "defaults": {}
+    },
+    {
+      "id": "optical_umd",
+      "family": "optical",
+      "label": "UMD",
+      "defaults": {}
+    },
+    {
+      "id": "optical_unspecified",
+      "family": "optical",
+      "label": "Optical disc",
+      "defaults": {}
+    },
+    {
+      "id": "digital_file",
+      "family": "digital",
+      "label": "Digital file",
+      "defaults": {}
+    },
+    {
+      "id": "digital_usb",
+      "family": "digital",
+      "label": "USB flash drive",
+      "defaults": {}
+    },
+    {
+      "id": "digital_memory_card",
+      "family": "digital",
+      "label": "Memory card",
+      "defaults": {}
+    },
+    {
+      "id": "digital_download_card",
+      "family": "digital",
+      "label": "Download card",
+      "defaults": {}
+    },
+    {
+      "id": "digital_floppy_disk",
+      "family": "digital",
+      "label": "Floppy disk",
+      "defaults": {}
+    },
+    {
+      "id": "digital_unspecified",
+      "family": "digital",
+      "label": "Digital",
+      "defaults": {}
+    },
+    {
+      "id": "video_dvd",
+      "family": "video",
+      "label": "DVD-Video",
+      "defaults": {}
+    },
+    {
+      "id": "video_dvdr",
+      "family": "video",
+      "label": "DVD-R",
+      "defaults": {}
+    },
+    {
+      "id": "video_blu_ray",
+      "family": "video",
+      "label": "Blu-ray",
+      "defaults": {}
+    },
+    {
+      "id": "video_hd_dvd",
+      "family": "video",
+      "label": "HD DVD",
+      "defaults": {}
+    },
+    {
+      "id": "video_laserdisc",
+      "family": "video",
+      "label": "Laserdisc",
+      "defaults": {}
+    },
+    {
+      "id": "video_cdv",
+      "family": "video",
+      "label": "CD Video",
+      "defaults": {}
+    },
+    {
+      "id": "video_vcd",
+      "family": "video",
+      "label": "Video CD",
+      "defaults": {}
+    },
+    {
+      "id": "video_svcd",
+      "family": "video",
+      "label": "Super Video CD",
+      "defaults": {}
+    },
+    {
+      "id": "video_vhs",
+      "family": "video",
+      "label": "VHS",
+      "defaults": {}
+    },
+    {
+      "id": "video_betamax",
+      "family": "video",
+      "label": "Betamax",
+      "defaults": {}
+    },
+    {
+      "id": "video_vhd",
+      "family": "video",
+      "label": "VHD",
+      "defaults": {}
+    },
+    {
+      "id": "video_ced",
+      "family": "video",
+      "label": "Capacitance Electronic Disc",
+      "defaults": {}
+    },
+    {
+      "id": "video_film_reel",
+      "family": "video",
+      "label": "Film reel",
+      "defaults": {}
+    },
+    {
+      "id": "video_unspecified",
+      "family": "video",
+      "label": "Video",
+      "defaults": {}
+    },
+    {
+      "id": "other_unspecified",
+      "family": "other",
+      "label": "Other",
+      "defaults": {}
+    }
+  ],
+  "values": {
+    "channels": [
+      "ambisonic",
+      "mono",
+      "multichannel",
+      "quadraphonic",
+      "stereo"
+    ],
+    "codecs": [
+      "aac",
+      "aiff",
+      "alac",
+      "ape",
+      "avi",
+      "dsd",
+      "flac",
+      "m4a",
+      "mkv",
+      "mov",
+      "mp3",
+      "mp4",
+      "mpeg_4_video",
+      "ogg",
+      "opus",
+      "wav",
+      "wavpack",
+      "wma",
+      "wmv"
+    ],
+    "variants": [
+      "blu_spec_cd",
+      "blu_spec_cd2",
+      "cd_g",
+      "copy_control",
+      "data",
+      "dts",
+      "enhanced",
+      "hdcd",
+      "hqcd",
+      "hybrid_layer",
+      "mini",
+      "minimax",
+      "mixed_mode",
+      "shm_cd",
+      "shm_sacd",
+      "single_sided",
+      "ultra_hd"
+    ],
+    "appearances": [
+      "clear",
+      "coloured",
+      "etched",
+      "marbled",
+      "picture_disc",
+      "shape",
+      "splatter",
+      "styrene"
+    ],
+    "release_kinds": [
+      "album",
+      "broadcast",
+      "ep",
+      "other",
+      "single"
+    ],
+    "traits": [
+      "audio_drama",
+      "audiobook",
+      "compilation",
+      "demo",
+      "dj_mix",
+      "field_recording",
+      "interview",
+      "live",
+      "maxi",
+      "mini",
+      "mixed",
+      "mixtape",
+      "remix",
+      "sampler",
+      "soundtrack",
+      "spokenword",
+      "transcription"
+    ],
+    "editions": [
+      "advance",
+      "cancelled",
+      "club_edition",
+      "deluxe_edition",
+      "expunged",
+      "jukebox",
+      "limited",
+      "mispress",
+      "misprint",
+      "numbered",
+      "partially_unofficial",
+      "promo",
+      "pseudo_release",
+      "reissue",
+      "remastered",
+      "repress",
+      "special_edition",
+      "test_pressing",
+      "unofficial",
+      "white_label",
+      "withdrawn"
+    ],
+    "packagings": [
+      "book",
+      "box",
+      "cardboard_sleeve",
+      "cassette_case",
+      "clamshell_case",
+      "digibook",
+      "digifile",
+      "digipak",
+      "digisleeve",
+      "discbox_slider",
+      "fatbox",
+      "gatefold",
+      "jewel_case",
+      "keep_case",
+      "longbox",
+      "metal_tin",
+      "none",
+      "other",
+      "plastic_sleeve",
+      "slidepack",
+      "slim_jewel_case",
+      "slipcase",
+      "snap_case",
+      "snappack",
+      "super_jewel_box"
+    ],
+    "containers": [
+      "box_set"
+    ],
+    "flags": [
+      "all_media"
+    ]
+  },
+  "discogs": {
+    "formats": {
+      "4-Track Cartridge": {
+        "medium": "tape_4_track"
+      },
+      "8-Track Cartridge": {
+        "medium": "tape_8_track"
+      },
+      "Acetate": {
+        "medium": "grooved_acetate"
+      },
+      "All Media": {
+        "flag": "all_media"
+      },
+      "Betacam": {
+        "medium": "video_betamax"
+      },
+      "Betacam SP": {
+        "medium": "video_betamax"
+      },
+      "Betamax": {
+        "medium": "video_betamax"
+      },
+      "Blu-ray": {
+        "medium": "video_blu_ray"
+      },
+      "Blu-ray-R": {
+        "medium": "video_blu_ray"
+      },
+      "Box Set": {
+        "container": "box_set"
+      },
+      "CD": {
+        "medium": "optical_cd"
+      },
+      "CDV": {
+        "medium": "video_cdv"
+      },
+      "CDr": {
+        "medium": "optical_cdr"
+      },
+      "CED": {
+        "medium": "video_ced"
+      },
+      "Cassette": {
+        "medium": "tape_cassette"
+      },
+      "Cylinder": {
+        "medium": "grooved_cylinder"
+      },
+      "DAT": {
+        "medium": "tape_dat"
+      },
+      "DCC": {
+        "medium": "tape_dcc"
+      },
+      "DVD": {
+        "medium": "video_dvd"
+      },
+      "DVD-Audio": {
+        "medium": "optical_dvd_audio"
+      },
+      "DVDr": {
+        "medium": "video_dvdr"
+      },
+      "DualDisc": {
+        "medium": "optical_dualdisc"
+      },
+      "Edison Disc": {
+        "medium": "grooved_edison_disc"
+      },
+      "Elcaset": {
+        "medium": "tape_elcaset"
+      },
+      "File": {
+        "medium": "digital_file"
+      },
+      "Film Reel": {
+        "medium": "video_film_reel"
+      },
+      "Flexi-disc": {
+        "medium": "grooved_flexi_disc"
+      },
+      "Floppy Disk": {
+        "medium": "digital_floppy_disk"
+      },
+      "HD DVD": {
+        "medium": "video_hd_dvd"
+      },
+      "HD DVD-R": {
+        "medium": "video_hd_dvd"
+      },
+      "Hybrid": {
+        "medium": "optical_sacd",
+        "variant": "hybrid_layer"
+      },
+      "Laserdisc": {
+        "medium": "video_laserdisc"
+      },
+      "Lathe Cut": {
+        "medium": "grooved_lathe_cut"
+      },
+      "Memory Stick": {
+        "medium": "digital_memory_card"
+      },
+      "Microcassette": {
+        "medium": "tape_microcassette"
+      },
+      "MiniDisc": {
+        "medium": "optical_minidisc"
+      },
+      "Minidisc": {
+        "medium": "optical_minidisc"
+      },
+      "Pathé Disc": {
+        "medium": "grooved_pathe_disc"
+      },
+      "PlayTape": {
+        "medium": "tape_playtape"
+      },
+      "Reel-To-Reel": {
+        "medium": "tape_reel_to_reel"
+      },
+      "SACD": {
+        "medium": "optical_sacd"
+      },
+      "SVCD": {
+        "medium": "video_svcd"
+      },
+      "Shellac": {
+        "family": "shellac"
+      },
+      "UMD": {
+        "medium": "optical_umd"
+      },
+      "Ultra HD Blu-ray": {
+        "medium": "video_blu_ray",
+        "variant": "ultra_hd"
+      },
+      "VCD": {
+        "medium": "video_vcd"
+      },
+      "VHD": {
+        "medium": "video_vhd"
+      },
+      "VHS": {
+        "medium": "video_vhs"
+      },
+      "Video 2000": {
+        "medium": "video_unspecified"
+      },
+      "Video8": {
+        "medium": "video_unspecified"
+      },
+      "Vinyl": {
+        "family": "vinyl"
+      }
+    },
+    "descriptions": {
+      "1 ⅞ ips": {
+        "target": "ignore"
+      },
+      "1\"": {
+        "target": "ignore"
+      },
+      "10\"": {
+        "target": "size_inches",
+        "value": 10
+      },
+      "11\"": {
+        "target": "size_inches",
+        "value": 11
+      },
+      "12\"": {
+        "target": "size_inches",
+        "value": 12
+      },
+      "128 kbps": {
+        "target": "ignore"
+      },
+      "15 ips": {
+        "target": "ignore"
+      },
+      "16 Bit": {
+        "target": "ignore"
+      },
+      "16 ⅔ RPM": {
+        "target": "speed_rpm",
+        "value": 16.67
+      },
+      "16\"": {
+        "target": "size_inches",
+        "value": 16
+      },
+      "160 kbps": {
+        "target": "ignore"
+      },
+      "192 kbps": {
+        "target": "ignore"
+      },
+      "24 Bit": {
+        "target": "ignore"
+      },
+      "256 kbps": {
+        "target": "ignore"
+      },
+      "3 ¾ ips": {
+        "target": "ignore"
+      },
+      "3\"": {
+        "target": "size_inches",
+        "value": 3
+      },
+      "320 kbps": {
+        "target": "ignore"
+      },
+      "33 ⅓ RPM": {
+        "target": "speed_rpm",
+        "value": 33.33
+      },
+      "45 RPM": {
+        "target": "speed_rpm",
+        "value": 45
+      },
+      "4K": {
+        "target": "variant",
+        "value": "ultra_hd"
+      },
+      "5\"": {
+        "target": "size_inches",
+        "value": 5
+      },
+      "7 ½ ips": {
+        "target": "ignore"
+      },
+      "7\"": {
+        "target": "size_inches",
+        "value": 7
+      },
+      "78 RPM": {
+        "target": "speed_rpm",
+        "value": 78
+      },
+      "8 ⅓ RPM": {
+        "target": "speed_rpm",
+        "value": 8.33
+      },
+      "8\"": {
+        "target": "size_inches",
+        "value": 8
+      },
+      "AAC": {
+        "target": "codec",
+        "value": "aac"
+      },
+      "AIFF": {
+        "target": "codec",
+        "value": "aiff"
+      },
+      "ALAC": {
+        "target": "codec",
+        "value": "alac"
+      },
+      "APE": {
+        "target": "codec",
+        "value": "ape"
+      },
+      "AVI": {
+        "target": "codec",
+        "value": "avi"
+      },
+      "Advance": {
+        "target": "edition",
+        "value": "advance"
+      },
+      "Album": {
+        "target": "release_kind",
+        "value": "album"
+      },
+      "All Media": {
+        "target": "flag",
+        "value": "all_media"
+      },
+      "Ambisonic": {
+        "target": "channels",
+        "value": "ambisonic"
+      },
+      "Audiobook": {
+        "target": "trait",
+        "value": "audiobook"
+      },
+      "Blu-ray Audio": {
+        "target": "ignore"
+      },
+      "Blu-ray-R": {
+        "target": "ignore"
+      },
+      "Blu-spec CD": {
+        "target": "variant",
+        "value": "blu_spec_cd"
+      },
+      "Blu-spec CD2": {
+        "target": "variant",
+        "value": "blu_spec_cd2"
+      },
+      "Box Set": {
+        "target": "container",
+        "value": "box_set"
+      },
+      "Business Card": {
+        "target": "packaging",
+        "value": "other"
+      },
+      "CD": {
+        "target": "ignore"
+      },
+      "CD+G": {
+        "target": "variant",
+        "value": "cd_g"
+      },
+      "CD-ROM": {
+        "target": "ignore"
+      },
+      "Card Backed": {
+        "target": "packaging",
+        "value": "cardboard_sleeve"
+      },
+      "Cassette": {
+        "target": "ignore"
+      },
+      "Clear": {
+        "target": "appearance",
+        "value": "clear"
+      },
+      "Club Edition": {
+        "target": "edition",
+        "value": "club_edition"
+      },
+      "Coloured": {
+        "target": "appearance",
+        "value": "coloured"
+      },
+      "Compilation": {
+        "target": "trait",
+        "value": "compilation"
+      },
+      "Copy Prot.": {
+        "target": "variant",
+        "value": "copy_control"
+      },
+      "DSD": {
+        "target": "codec",
+        "value": "dsd"
+      },
+      "DTS": {
+        "target": "variant",
+        "value": "dts"
+      },
+      "DTS-HD": {
+        "target": "ignore"
+      },
+      "DVD-Data": {
+        "target": "ignore"
+      },
+      "DVD-ROM": {
+        "target": "ignore"
+      },
+      "DVD-Video": {
+        "target": "ignore"
+      },
+      "Data": {
+        "target": "variant",
+        "value": "data"
+      },
+      "Deluxe Edition": {
+        "target": "edition",
+        "value": "deluxe_edition"
+      },
+      "Demo": {
+        "target": "trait",
+        "value": "demo"
+      },
+      "Digibook": {
+        "target": "packaging",
+        "value": "digibook"
+      },
+      "Digipak": {
+        "target": "packaging",
+        "value": "digipak"
+      },
+      "Digisleeve": {
+        "target": "packaging",
+        "value": "digisleeve"
+      },
+      "Dolby Digital": {
+        "target": "ignore"
+      },
+      "EP": {
+        "target": "release_kind",
+        "value": "ep"
+      },
+      "Enhanced": {
+        "target": "variant",
+        "value": "enhanced"
+      },
+      "Etched": {
+        "target": "appearance",
+        "value": "etched"
+      },
+      "FLAC": {
+        "target": "codec",
+        "value": "flac"
+      },
+      "Gatefold": {
+        "target": "packaging",
+        "value": "gatefold"
+      },
+      "HDCD": {
+        "target": "variant",
+        "value": "hdcd"
+      },
+      "HQCD": {
+        "target": "variant",
+        "value": "hqcd"
+      },
+      "Hybrid": {
+        "target": "variant",
+        "value": "hybrid_layer"
+      },
+      "Interview": {
+        "target": "trait",
+        "value": "interview"
+      },
+      "Jewel Case": {
+        "target": "packaging",
+        "value": "jewel_case"
+      },
+      "Jukebox": {
+        "target": "edition",
+        "value": "jukebox"
+      },
+      "LP": {
+        "target": "size_inches",
+        "value": 12
+      },
+      "Limited Edition": {
+        "target": "edition",
+        "value": "limited"
+      },
+      "Live": {
+        "target": "trait",
+        "value": "live"
+      },
+      "M4A": {
+        "target": "codec",
+        "value": "m4a"
+      },
+      "MKV": {
+        "target": "codec",
+        "value": "mkv"
+      },
+      "MOV": {
+        "target": "codec",
+        "value": "mov"
+      },
+      "MP3": {
+        "target": "codec",
+        "value": "mp3"
+      },
+      "MP4": {
+        "target": "codec",
+        "value": "mp4"
+      },
+      "MPEG-4 Video": {
+        "target": "codec",
+        "value": "mpeg_4_video"
+      },
+      "Marbled": {
+        "target": "appearance",
+        "value": "marbled"
+      },
+      "Maxi-Single": {
+        "target": "release_kind",
+        "value": "single"
+      },
+      "Mini": {
+        "target": "variant",
+        "value": "mini"
+      },
+      "Mini-Album": {
+        "target": "release_kind",
+        "value": "album"
+      },
+      "Minimax": {
+        "target": "variant",
+        "value": "minimax"
+      },
+      "Mispress": {
+        "target": "edition",
+        "value": "mispress"
+      },
+      "Misprint": {
+        "target": "edition",
+        "value": "misprint"
+      },
+      "Mixed": {
+        "target": "trait",
+        "value": "mixed"
+      },
+      "Mixed Mode": {
+        "target": "variant",
+        "value": "mixed_mode"
+      },
+      "Mixtape": {
+        "target": "trait",
+        "value": "mixtape"
+      },
+      "Mono": {
+        "target": "channels",
+        "value": "mono"
+      },
+      "Multi-Region": {
+        "target": "ignore"
+      },
+      "Multichannel": {
+        "target": "channels",
+        "value": "multichannel"
+      },
+      "NTSC": {
+        "target": "ignore"
+      },
+      "Numbered": {
+        "target": "edition",
+        "value": "numbered"
+      },
+      "OGG": {
+        "target": "codec",
+        "value": "ogg"
+      },
+      "Ogg Vorbis": {
+        "target": "codec",
+        "value": "ogg"
+      },
+      "Opus": {
+        "target": "codec",
+        "value": "opus"
+      },
+      "PAL": {
+        "target": "ignore"
+      },
+      "Partially Mixed": {
+        "target": "trait",
+        "value": "mixed"
+      },
+      "Partially Unofficial": {
+        "target": "edition",
+        "value": "partially_unofficial"
+      },
+      "Picture Disc": {
+        "target": "appearance",
+        "value": "picture_disc"
+      },
+      "Promo": {
+        "target": "edition",
+        "value": "promo"
+      },
+      "Quadraphonic": {
+        "target": "channels",
+        "value": "quadraphonic"
+      },
+      "Record Store Day": {
+        "target": "ignore"
+      },
+      "Region 1": {
+        "target": "ignore"
+      },
+      "Region 2": {
+        "target": "ignore"
+      },
+      "Region 3": {
+        "target": "ignore"
+      },
+      "Region 4": {
+        "target": "ignore"
+      },
+      "Region 5": {
+        "target": "ignore"
+      },
+      "Region 6": {
+        "target": "ignore"
+      },
+      "Region Free": {
+        "target": "ignore"
+      },
+      "Reissue": {
+        "target": "edition",
+        "value": "reissue"
+      },
+      "Remastered": {
+        "target": "edition",
+        "value": "remastered"
+      },
+      "Remix": {
+        "target": "trait",
+        "value": "remix"
+      },
+      "Repress": {
+        "target": "edition",
+        "value": "repress"
+      },
+      "SACD": {
+        "target": "ignore"
+      },
+      "SECAM": {
+        "target": "ignore"
+      },
+      "SHM-CD": {
+        "target": "variant",
+        "value": "shm_cd"
+      },
+      "SHM-SACD": {
+        "target": "variant",
+        "value": "shm_sacd"
+      },
+      "Sampler": {
+        "target": "trait",
+        "value": "sampler"
+      },
+      "Shape": {
+        "target": "appearance",
+        "value": "shape"
+      },
+      "Single": {
+        "target": "release_kind",
+        "value": "single"
+      },
+      "Single Sided": {
+        "target": "variant",
+        "value": "single_sided"
+      },
+      "Slipcase": {
+        "target": "packaging",
+        "value": "slipcase"
+      },
+      "Soundtrack": {
+        "target": "trait",
+        "value": "soundtrack"
+      },
+      "Special Edition": {
+        "target": "edition",
+        "value": "special_edition"
+      },
+      "Splatter": {
+        "target": "appearance",
+        "value": "splatter"
+      },
+      "Spoken Word": {
+        "target": "trait",
+        "value": "spokenword"
+      },
+      "Stereo": {
+        "target": "channels",
+        "value": "stereo"
+      },
+      "Styrene": {
+        "target": "appearance",
+        "value": "styrene"
+      },
+      "Test Pressing": {
+        "target": "edition",
+        "value": "test_pressing"
+      },
+      "Transcription": {
+        "target": "trait",
+        "value": "transcription"
+      },
+      "Unofficial Release": {
+        "target": "edition",
+        "value": "unofficial"
+      },
+      "Vinyl": {
+        "target": "ignore"
+      },
+      "WAV": {
+        "target": "codec",
+        "value": "wav"
+      },
+      "WMA": {
+        "target": "codec",
+        "value": "wma"
+      },
+      "WMV": {
+        "target": "codec",
+        "value": "wmv"
+      },
+      "WavPack": {
+        "target": "codec",
+        "value": "wavpack"
+      },
+      "White Label": {
+        "target": "edition",
+        "value": "white_label"
+      },
+      "¼\"": {
+        "target": "ignore"
+      },
+      "½\"": {
+        "target": "ignore"
+      }
+    }
+  },
+  "musicbrainz": {
+    "formats": {
+      "10\" Shellac": {
+        "medium": "shellac_10"
+      },
+      "10\" Vinyl": {
+        "medium": "vinyl_10"
+      },
+      "12\" LaserDisc": {
+        "medium": "video_laserdisc"
+      },
+      "12\" Shellac": {
+        "medium": "shellac_12"
+      },
+      "12\" Vinyl": {
+        "medium": "vinyl_12"
+      },
+      "3.5\" Floppy Disk": {
+        "medium": "digital_floppy_disk"
+      },
+      "4-Track Cartridge": {
+        "medium": "tape_4_track"
+      },
+      "5.25\" Floppy Disk": {
+        "medium": "digital_floppy_disk"
+      },
+      "7\" Flexi-disc": {
+        "medium": "grooved_flexi_disc"
+      },
+      "7\" Shellac": {
+        "medium": "shellac_7"
+      },
+      "7\" Vinyl": {
+        "medium": "vinyl_7"
+      },
+      "8\" LaserDisc": {
+        "medium": "video_laserdisc"
+      },
+      "8\" Vinyl": {
+        "family": "vinyl"
+      },
+      "8-Track Cartridge": {
+        "medium": "tape_8_track"
+      },
+      "8cm CD": {
+        "medium": "optical_cd",
+        "variant": "mini"
+      },
+      "8cm CD+G": {
+        "medium": "optical_cd",
+        "variant": "cd_g"
+      },
+      "8cm DVD": {
+        "medium": "video_dvd",
+        "variant": "mini"
+      },
+      "Acetate": {
+        "medium": "grooved_acetate"
+      },
+      "Betamax": {
+        "medium": "video_betamax"
+      },
+      "Blu-ray": {
+        "medium": "video_blu_ray"
+      },
+      "Blu-ray-R": {
+        "medium": "video_blu_ray"
+      },
+      "Blu-spec CD": {
+        "medium": "optical_cd",
+        "variant": "blu_spec_cd"
+      },
+      "CD": {
+        "medium": "optical_cd"
+      },
+      "CD+G": {
+        "medium": "optical_cd",
+        "variant": "cd_g"
+      },
+      "CD-R": {
+        "medium": "optical_cdr"
+      },
+      "CDV": {
+        "medium": "video_cdv"
+      },
+      "CED": {
+        "medium": "video_ced"
+      },
+      "Cartridge": {
+        "medium": "tape_8_track"
+      },
+      "Cassette": {
+        "medium": "tape_cassette"
+      },
+      "Copy Control CD": {
+        "medium": "optical_cd",
+        "variant": "copy_control"
+      },
+      "DAT": {
+        "medium": "tape_dat"
+      },
+      "DCC": {
+        "medium": "tape_dcc"
+      },
+      "DTS CD": {
+        "medium": "optical_cd",
+        "variant": "dts"
+      },
+      "DVD": {
+        "medium": "video_dvd"
+      },
+      "DVD-Audio": {
+        "medium": "optical_dvd_audio"
+      },
+      "DVD-R": {
+        "medium": "video_dvdr"
+      },
+      "DVD-Video": {
+        "medium": "video_dvd"
+      },
+      "DVDplus": {
+        "medium": "optical_dualdisc"
+      },
+      "DVDplus (CD side)": {
+        "medium": "optical_dualdisc"
+      },
+      "DVDplus (DVD-Audio side)": {
+        "medium": "optical_dualdisc"
+      },
+      "DVDplus (DVD-Video side)": {
+        "medium": "optical_dualdisc"
+      },
+      "Data CD": {
+        "medium": "optical_cd",
+        "variant": "data"
+      },
+      "Digital Media": {
+        "medium": "digital_file"
+      },
+      "Download Card": {
+        "medium": "digital_download_card"
+      },
+      "DualDisc": {
+        "medium": "optical_dualdisc"
+      },
+      "DualDisc (CD side)": {
+        "medium": "optical_dualdisc"
+      },
+      "DualDisc (DVD-Audio side)": {
+        "medium": "optical_dualdisc"
+      },
+      "DualDisc (DVD-Video side)": {
+        "medium": "optical_dualdisc"
+      },
+      "Edison Diamond Disc": {
+        "medium": "grooved_edison_disc"
+      },
+      "Elcaset": {
+        "medium": "tape_elcaset"
+      },
+      "Enhanced CD": {
+        "medium": "optical_cd",
+        "variant": "enhanced"
+      },
+      "Flexi-disc": {
+        "medium": "grooved_flexi_disc"
+      },
+      "Floppy Disk": {
+        "medium": "digital_floppy_disk"
+      },
+      "HD-DVD": {
+        "medium": "video_hd_dvd"
+      },
+      "HDCD": {
+        "medium": "optical_cd",
+        "variant": "hdcd"
+      },
+      "HQCD": {
+        "medium": "optical_cd",
+        "variant": "hqcd"
+      },
+      "Hybrid SACD": {
+        "medium": "optical_sacd",
+        "variant": "hybrid_layer"
+      },
+      "Hybrid SACD (CD layer)": {
+        "medium": "optical_sacd",
+        "variant": "hybrid_layer"
+      },
+      "Hybrid SACD (SACD layer)": {
+        "medium": "optical_sacd",
+        "variant": "hybrid_layer"
+      },
+      "Hybrid SACD (SACD layer, 2 channels)": {
+        "medium": "optical_sacd",
+        "variant": "hybrid_layer"
+      },
+      "Hybrid SACD (SACD layer, multichannel)": {
+        "medium": "optical_sacd",
+        "variant": "hybrid_layer"
+      },
+      "KiT Album": {
+        "medium": "digital_unspecified"
+      },
+      "Laserdisc": {
+        "medium": "video_laserdisc"
+      },
+      "Memory Stick": {
+        "medium": "digital_memory_card"
+      },
+      "Microcassette": {
+        "medium": "tape_microcassette"
+      },
+      "MiniDisc": {
+        "medium": "optical_minidisc"
+      },
+      "Minimax CD": {
+        "medium": "optical_cd",
+        "variant": "minimax"
+      },
+      "Mixed Mode CD": {
+        "medium": "optical_cd",
+        "variant": "mixed_mode"
+      },
+      "Music Card": {
+        "medium": "digital_memory_card"
+      },
+      "Other": {
+        "medium": "other_unspecified"
+      },
+      "Pathé Disc": {
+        "medium": "grooved_pathe_disc"
+      },
+      "Phonograph Record": {
+        "family": "grooved_other"
+      },
+      "Piano Roll": {
+        "medium": "grooved_piano_roll"
+      },
+      "PlayTape": {
+        "medium": "tape_playtape"
+      },
+      "Playbutton": {
+        "medium": "digital_unspecified"
+      },
+      "Reel-to-reel": {
+        "medium": "tape_reel_to_reel"
+      },
+      "SACD": {
+        "medium": "optical_sacd"
+      },
+      "SACD (2 channels)": {
+        "medium": "optical_sacd"
+      },
+      "SACD (multichannel)": {
+        "medium": "optical_sacd"
+      },
+      "SD Card": {
+        "medium": "digital_memory_card"
+      },
+      "SHM-CD": {
+        "medium": "optical_cd",
+        "variant": "shm_cd"
+      },
+      "SHM-SACD": {
+        "medium": "optical_sacd",
+        "variant": "shm_sacd"
+      },
+      "SVCD": {
+        "medium": "video_svcd"
+      },
+      "Shellac": {
+        "family": "shellac"
+      },
+      "Tefifon": {
+        "medium": "tape_unspecified"
+      },
+      "UMD": {
+        "medium": "optical_umd"
+      },
+      "USB Flash Drive": {
+        "medium": "digital_usb"
+      },
+      "VCD": {
+        "medium": "video_vcd"
+      },
+      "VHD": {
+        "medium": "video_vhd"
+      },
+      "VHS": {
+        "medium": "video_vhs"
+      },
+      "Video 2000": {
+        "medium": "video_unspecified"
+      },
+      "Vinyl": {
+        "family": "vinyl"
+      },
+      "VinylDisc": {
+        "medium": "optical_dualdisc"
+      },
+      "VinylDisc (CD side)": {
+        "medium": "optical_dualdisc"
+      },
+      "VinylDisc (DVD side)": {
+        "medium": "optical_dualdisc"
+      },
+      "VinylDisc (Vinyl side)": {
+        "medium": "optical_dualdisc"
+      },
+      "Wax Cylinder": {
+        "medium": "grooved_cylinder"
+      },
+      "Zip Disk": {
+        "medium": "digital_floppy_disk"
+      },
+      "slotMusic": {
+        "medium": "digital_memory_card"
+      }
+    },
+    "status": {
+      "Bootleg": "unofficial",
+      "Cancelled": "cancelled",
+      "Expunged": "expunged",
+      "Official": null,
+      "Promotion": "promo",
+      "Pseudo-Release": "pseudo_release",
+      "Withdrawn": "withdrawn"
+    },
+    "packaging": {
+      "Book": "book",
+      "Box": "box",
+      "Cardboard/Paper Sleeve": "cardboard_sleeve",
+      "Cassette Case": "cassette_case",
+      "Clamshell Case": "clamshell_case",
+      "Digibook": "digibook",
+      "Digifile": "digifile",
+      "Digipak": "digipak",
+      "Discbox Slider": "discbox_slider",
+      "Fatbox": "fatbox",
+      "Gatefold Cover": "gatefold",
+      "Jewel Case": "jewel_case",
+      "Keep Case": "keep_case",
+      "Longbox": "longbox",
+      "Metal Tin": "metal_tin",
+      "None": "none",
+      "Other": "other",
+      "Plastic Sleeve": "plastic_sleeve",
+      "Slidepack": "slidepack",
+      "Slim Jewel Case": "slim_jewel_case",
+      "Slipcase": "slipcase",
+      "Snap Case": "snap_case",
+      "SnapPack": "snappack",
+      "Super Jewel Box": "super_jewel_box"
+    },
+    "primary_types": {
+      "Album": "album",
+      "Broadcast": "broadcast",
+      "EP": "ep",
+      "Other": "other",
+      "Single": "single"
+    },
+    "secondary_types": {
+      "Audio drama": "audio_drama",
+      "Audiobook": "audiobook",
+      "Compilation": "compilation",
+      "DJ-mix": "dj_mix",
+      "Demo": "demo",
+      "Field recording": "field_recording",
+      "Interview": "interview",
+      "Live": "live",
+      "Mixtape/Street": "mixtape",
+      "Remix": "remix",
+      "Soundtrack": "soundtrack",
+      "Spokenword": "spokenword"
+    }
+  }
+}

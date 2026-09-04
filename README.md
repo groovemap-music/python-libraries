@@ -52,6 +52,24 @@ and release rehearsal and writes an ignored, deterministic attestation to `dist/
 [publication-readiness guide](docs/publication-readiness.md) lists the visibility, anonymous-fetch,
 credential-removal, and package-release approvals that remain external to repository validation.
 
+## Vendored media taxonomy
+
+`groovemap-runtime` ships the canonical media taxonomy that [ADR 0007 in the `design`
+repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0007-canonical-media-taxonomy.md)
+makes authoritative for every GrooveMap service. `src/common/media_taxonomy/media-taxonomy.json`
+is vendored verbatim, byte for byte, from `taxonomy/media/v1/media-taxonomy.json` in the
+`design` repository; it ships as package data inside the `groovemap-runtime` wheel and is not
+edited in this repository. `src/common/media_taxonomy/source.json` beside it records the
+source commit and the vendored file's SHA-256 digest. `just check` runs
+`scripts/check-media-taxonomy.py`, which recomputes that digest and fails if it differs from
+`source.json` or if either file is missing — a drift means the vendored copy is stale.
+
+To re-vendor after an upstream change: copy the new file from the reviewed `design` commit,
+recompute its digest (`shasum -a 256 src/common/media_taxonomy/media-taxonomy.json`), and
+update `source.json`'s `commit` and `sha256` fields to match. The same vocabulary is vendored
+the same way into `discogs-ingestion` and `musicbrainz-ingestion`; keep all three in step with
+the same reviewed `design` commit.
+
 ## License and history
 
 The current tree is licensed under the [MIT License](LICENSE). Its relevant source history was
