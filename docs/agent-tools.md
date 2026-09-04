@@ -12,7 +12,9 @@ The names in `common.agent_tools.__all__` are the stable public import surface.
 | Capability | Stable names | Consumer supplies |
 | --- | --- | --- |
 | Discovery | `search` (with an optional `media` filter), `get_collaborators`, `get_trends` | Search, collaborator, or trend resolver plus its database handles |
+| Media filter validation | `validate_media_filter` | Nothing — pure taxonomy lookup |
 | Entity details | `get_artist_details`, `get_genre_details`, `get_label_details`, `get_release_details`, `get_style_details` | Driver and entity handler |
+| Typed media access | `media_of` | Nothing — pure accessor over a release dict |
 | Graph traversal | `find_path` | Driver and path resolver |
 | Graph summaries | `get_genre_tree`, `get_graph_stats` | Driver and summary resolver |
 
@@ -43,8 +45,8 @@ repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0007-ca
 defines, for example `["vinyl", "optical_cd"]`. The ids are validated against the taxonomy
 before the query runs, so an agent that invents a medium gets one `ValueError` naming every
 unknown id rather than an empty result set that reads as "no such records". Validate a filter
-ahead of a call with `common.agent_tools.discovery.validate_media_filter`, and enumerate the
-accepted ids with `common.family_ids()` and `common.medium_ids()`.
+ahead of a call with `validate_media_filter` (re-exported at `common.agent_tools.validate_media_filter`),
+and enumerate the accepted ids with `common.family_ids()` and `common.medium_ids()`.
 
 A validated filter reaches the consumer's search resolver as a `media` keyword argument, which
 the catalog-api search route sends on as repeated `media` query parameters. `None` and an empty
@@ -55,10 +57,10 @@ one.
 `get_release_details` passes through the `media` key a release carries, exactly as the store
 holds it. It is the canonical media block, typed as `MediaBlock` in
 `common.agent_tools.schemas` alongside `MediaItem`, `MediaSource`, and `MediaUnmapped`. The key
-is absent for a release written before the block existed, so read it with
-`common.agent_tools.entities.media_of`, which returns the typed block or `None`. Derive a
-best-effort block from the legacy format names with `common.legacy_format_names_to_media` when
-one is needed and none is stored.
+is absent for a release written before the block existed, so read it with `media_of`
+(re-exported at `common.agent_tools.media_of`), which returns the typed block or `None`.
+Derive a best-effort block from the legacy format names with `common.legacy_format_names_to_media`
+when one is needed and none is stored.
 
 ## Compatibility boundary
 

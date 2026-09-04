@@ -23,6 +23,7 @@ lint:
 
 typecheck:
     uv run mypy
+    uv run mypy --config-file agent-tools/pyproject.toml
 
 test:
     uv run pytest -m "not integration" --cov=common --cov-report=term-missing --cov-report=xml
