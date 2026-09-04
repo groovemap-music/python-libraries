@@ -36,6 +36,7 @@ RUNTIME_EXPORTS = {
     "execute_sql",
     "families_of",
     "family_ids",
+    "flatten_descriptions",
     "get_meter",
     "instrument_fastapi_app",
     "instrument_httpx",

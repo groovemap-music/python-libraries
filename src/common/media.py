@@ -30,6 +30,7 @@ from typing import Any, Final
 __all__ = [
     "families_of",
     "family_ids",
+    "flatten_descriptions",
     "legacy_format_names_to_media",
     "map_discogs_formats",
     "map_musicbrainz_release",

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from common.media import (
         families_of,
         family_ids,
+        flatten_descriptions,
         legacy_format_names_to_media,
         map_discogs_formats,
         map_musicbrainz_release,
@@ -62,6 +63,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "HealthServer": ("common.health_server", "HealthServer"),
     "families_of": ("common.media", "families_of"),
     "family_ids": ("common.media", "family_ids"),
+    "flatten_descriptions": ("common.media", "flatten_descriptions"),
     "legacy_format_names_to_media": ("common.media", "legacy_format_names_to_media"),
     "map_discogs_formats": ("common.media", "map_discogs_formats"),
     "map_musicbrainz_release": ("common.media", "map_musicbrainz_release"),
