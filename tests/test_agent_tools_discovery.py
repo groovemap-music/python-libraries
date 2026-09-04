@@ -131,7 +131,11 @@ async def test_search_rejects_media_ids_the_taxonomy_does_not_define() -> None:
             media=["vinyl_13", "vinyl", "laserdisk"],
         )
 
-    assert "vinyl_12" in str(error.value) or "vinyl" in str(error.value)
+    # The known id ("vinyl") is not reported as unknown, and each unknown id is named exactly
+    # once, sorted, even though "vinyl_13" was requested before "laserdisk".
+    assert str(error.value) == (
+        "unknown media ids: laserdisk, vinyl_13. Valid ids are the taxonomy's family ids and medium ids, for example vinyl or vinyl_12."
+    )
     executor.assert_not_awaited()
 
 

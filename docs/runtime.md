@@ -15,7 +15,7 @@ from an implementation module, when a name appears here.
 | Data and diagnostics | `normalize_record`, `describe_exception` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
 | Health and outage control | `HealthServer`, `OutageBackoff` |
-| Media taxonomy | `map_discogs_formats`, `map_musicbrainz_release`, `legacy_format_names_to_media`, `families_of`, `family_ids`, `medium_ids`, `medium_label` |
+| Media taxonomy | `map_discogs_formats`, `map_musicbrainz_release`, `legacy_format_names_to_media`, `flatten_descriptions`, `families_of`, `family_ids`, `medium_ids`, `medium_label` |
 | Neo4j | `AsyncResilientNeo4jDriver`, `ResilientNeo4jDriver`, `with_async_neo4j_retry`, `with_neo4j_retry` |
 | PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL`, `ResilientPostgreSQLPool` |
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
@@ -176,6 +176,11 @@ repository re-runs in `tests/test_media.py`, so the same input yields the same b
   accepted: the normalized releases-event shape, whose descriptions arrive as
   `{"description": [...]}` or as a bare string, and the Discogs API shape, whose `descriptions`
   is already a flat list.
+- `flatten_descriptions(descriptions)` flattens either provider description shape — the
+  normalized `{"description": [...]}` (or bare-string) form, or the Discogs API's already-flat
+  list — into a plain list of strings. `map_discogs_formats` uses it internally, and consumers
+  that need to inspect a raw provider `descriptions` value on its own (outside a full format
+  entry) can call it directly.
 - `map_musicbrainz_release(release)` maps a MusicBrainz release: its `media` entries (`format`,
   `position`, `track_count`), `status`, `packaging`, and `release_group` primary and secondary
   types.
