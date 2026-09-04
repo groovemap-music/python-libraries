@@ -276,3 +276,37 @@ def test_typed_media_block_matches_what_the_mapper_returns() -> None:
     assert set(MediaItem.__annotations__) == set(block["items"][0])
     assert set(MediaSource.__annotations__) == set(block["items"][0]["source"])
     assert set(MediaUnmapped.__annotations__) == set(block["unmapped"])
+
+
+# The two tests below lock in deliberate divergences from the JavaScript reference mapper,
+# confirmed against the Rust mappers' differential tests. Do not "restore fidelity" to the
+# reference here: these are reference bugs, and reproducing them would put the three mappers
+# back out of agreement on malformed input. The 19 conformance fixtures do not cover either
+# case, so these tests are the only thing holding the rule.
+
+
+@pytest.mark.parametrize("entry", [["Vinyl", "LP"], [], ("Vinyl",)])
+def test_a_format_entry_that_is_not_an_object_is_skipped_entirely(entry: object) -> None:
+    """The reference's `typeof x === "object"` wrongly admits arrays; a sequence is not an entry."""
+    discogs = map_discogs_formats([entry, {"name": "Vinyl", "qty": "1", "descriptions": ["LP"]}])
+    musicbrainz = map_musicbrainz_release({"media": [entry, {"format": "CD", "position": 1}]})
+
+    for block in (discogs, musicbrainz):
+        assert len(block["items"]) == 1
+        assert block["unmapped"] == {"formats": [], "descriptions": []}
+
+
+def test_object_prototype_names_are_unknown_rather_than_inherited_members() -> None:
+    """A raw name like "constructor" resolves to a JavaScript builtin, not to a vocabulary entry."""
+    block = map_discogs_formats([{"name": "constructor", "qty": "1", "descriptions": ["__proto__", "toString"]}])
+
+    assert block["items"] == []
+    assert block["unmapped"] == {"formats": ["constructor"], "descriptions": ["__proto__", "toString"]}
+    assert map_musicbrainz_release({"media": [{"format": "__proto__"}]})["unmapped"]["formats"] == ["__proto__"]
+
+
+def test_sorted_lists_use_unicode_code_point_order() -> None:
+    """Code-point order is canonical, so a locale-aware or case-folding sort would diverge."""
+    block = map_discogs_formats([{"name": "Vinyl", "qty": "1", "descriptions": ["Zebra", "apple", "Apple", "Ábaco"]}])
+
+    assert block["unmapped"]["descriptions"] == ["Apple", "Zebra", "apple", "Ábaco"]
