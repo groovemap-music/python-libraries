@@ -1,7 +1,7 @@
 # `groovemap-agent-tools` contract
 
 `groovemap-agent-tools` supplies framework-neutral async orchestration through
-`common.agent_tools`. Its supported interpreter line is Python 3.14, pinned to Python 3.14.5 in
+`common.agent_tools`. Its supported interpreter line is Python 3.14, pinned to Python 3.14.7 in
 CI. It installs no console command and requires the exact same released version of
 `groovemap-runtime`.
 

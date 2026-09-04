@@ -22,7 +22,7 @@ flowchart LR
     Runtime -. optional extra .-> Backend[Metrics / Neo4j / OpenTelemetry / PostgreSQL / RabbitMQ]
 ```
 
-The supported interpreter line is Python 3.14, pinned to Python 3.14.5 in CI. Neither
+The supported interpreter line is Python 3.14, pinned to Python 3.14.7 in CI. Neither
 distribution installs a console command. See the local package contracts for the complete
 [runtime API](docs/runtime.md), [agent-tools API](docs/agent-tools.md), and
 [compatibility and release policy](docs/compatibility-and-releases.md).

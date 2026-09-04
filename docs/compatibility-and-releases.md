@@ -3,7 +3,7 @@
 ## Supported environment
 
 Both distributions require Python 3.14 and are typed (`py.typed`). The supported interpreter
-line is Python 3.14, and CI pins that line to Python 3.14.5 through `.mise.toml`.
+line is Python 3.14, and CI pins that line to Python 3.14.7 through `.mise.toml`.
 Future Python lines are not considered supported until a dedicated validation lane passes.
 Optional integrations are supported only when installed through the corresponding
 `groovemap-runtime` extra.
