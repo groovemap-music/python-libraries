@@ -15,6 +15,7 @@ from an implementation module, when a name appears here.
 | Data and diagnostics | `normalize_record`, `describe_exception` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
 | Health and outage control | `HealthServer`, `OutageBackoff` |
+| Media taxonomy | `map_discogs_formats`, `map_musicbrainz_release`, `legacy_format_names_to_media`, `families_of`, `family_ids`, `medium_ids`, `medium_label` |
 | Neo4j | `AsyncResilientNeo4jDriver`, `ResilientNeo4jDriver`, `with_async_neo4j_retry`, `with_neo4j_retry` |
 | PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL`, `ResilientPostgreSQLPool` |
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
@@ -161,6 +162,47 @@ hostnames are never attribute values. `CircuitBreakerConfig` takes an optional `
 the gauge; it defaults to the lowercased breaker `name`, so name a breaker after its backing
 system or set `system` explicitly. `ResilientConnection` and `AsyncResilientConnection` take the
 same optional `system` keyword for the reconnect counter.
+
+## Media taxonomy boundary
+
+The canonical media vocabulary that [ADR 0007 in the `design`
+repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0007-canonical-media-taxonomy.md)
+makes authoritative is vendored into this distribution as package data, and `common.media` is
+the single Python mapper every GrooveMap service shares. The two Rust producers carry their own
+mappers; all three are held to the design repository's conformance fixtures, which this
+repository re-runs in `tests/test_media.py`, so the same input yields the same block everywhere.
+
+- `map_discogs_formats(formats)` maps a Discogs `formats` list. Both provider shapes are
+  accepted: the normalized releases-event shape, whose descriptions arrive as
+  `{"description": [...]}` or as a bare string, and the Discogs API shape, whose `descriptions`
+  is already a flat list.
+- `map_musicbrainz_release(release)` maps a MusicBrainz release: its `media` entries (`format`,
+  `position`, `track_count`), `status`, `packaging`, and `release_group` primary and secondary
+  types.
+- `legacy_format_names_to_media(names)` derives a best-effort block from a flat list of raw
+  Discogs format names such as `["Vinyl", "LP", "Album"]`, for events and stored records that
+  predate the canonical block. A name the vocabulary knows as a format name opens a format
+  entry; every other name is a description of the entry that precedes it, and names before the
+  first format name attach to it. Prefer `map_discogs_formats` whenever the raw structure
+  survives.
+- `families_of(media_block)` returns the sorted, unique family ids a block covers.
+- `family_ids()` and `medium_ids()` return the closed id sets, in vocabulary order, for
+  validating a caller-supplied media filter. `medium_label(medium_id)` returns a medium's
+  human-readable label and raises `KeyError` for an unknown id.
+
+Every mapper returns a plain JSON-ready `dict` of `dict`, `list`, `str`, number, and `None`, so
+the block can be attached to an event or written to a JSONB column without a serializer. The
+mappers read only the standard library, so they add nothing to the base install. Malformed
+input is skipped rather than raised on, and any raw value the vocabulary does not recognize is
+preserved under `unmapped` rather than dropped.
+
+Ordering is fixed by the ADR because independent implementations must agree byte for byte:
+`items` follow source order, `source.descriptions` are kept as received, and every other list
+is sorted and de-duplicated. The first value wins for scalar release facts. Every field is
+always present, holding `null` or an empty list when unknown.
+
+`common.agent_tools.schemas` carries the same shape as `MediaBlock`, `MediaItem`, and
+`MediaSource` typed dictionaries for consumers that want the block statically checked.
 
 ## Compatibility boundary
 
