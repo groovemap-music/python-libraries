@@ -70,7 +70,9 @@ AGENT_TOOLS_EXPORTS = {
     "get_release_details",
     "get_style_details",
     "get_trends",
+    "media_of",
     "search",
+    "validate_media_filter",
 }
 
 
