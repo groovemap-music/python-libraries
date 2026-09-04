@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -64,7 +65,8 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
     assert library["repository"] == "groovemap-music/python-libraries"
     assert len(library["revision"]) == 40
     assert library["python"] == "3.14.5"
-    assert library["packages"] == ["groovemap-runtime==0.1.0", "groovemap-agent-tools==0.1.0"]
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    assert library["packages"] == [f"groovemap-runtime=={version}", f"groovemap-agent-tools=={version}"]
 
     verification = matrix["verification"]
     assert verification["consumer_command"] == "just check"

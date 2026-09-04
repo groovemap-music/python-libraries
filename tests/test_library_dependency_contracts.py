@@ -37,8 +37,11 @@ def test_runtime_metrics_dependency_is_optional_and_in_all() -> None:
 def test_agent_tools_uses_the_workspace_runtime() -> None:
     """The second distribution must resolve the synchronized runtime package locally."""
     agent_tools = _toml("agent-tools/pyproject.toml")["project"]
-    assert agent_tools["version"] == _toml("pyproject.toml")["project"]["version"]
-    assert agent_tools["dependencies"] == ["groovemap-runtime==0.1.0"]
+    runtime_version = _toml("pyproject.toml")["project"]["version"]
+    assert agent_tools["version"] == runtime_version
+    # Derived, not literal: the pin has to track every bump, and a stale literal here would
+    # fail the release rather than catch a real drift.
+    assert agent_tools["dependencies"] == [f"groovemap-runtime=={runtime_version}"]
 
     locked = _locked_package("groovemap-agent-tools")
     assert {dependency["name"] for dependency in locked["dependencies"]} == {"groovemap-runtime"}
