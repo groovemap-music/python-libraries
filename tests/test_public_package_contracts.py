@@ -128,11 +128,11 @@ def test_documented_python_support_matches_the_pinned_ci_lane() -> None:
         REPO_ROOT / "docs/compatibility-and-releases.md",
     ]
 
-    assert mise["tools"]["python"] == "3.14.5"
+    assert mise["tools"]["python"] == "3.14.7"
     # uv normalizes the lock's requires-python (">=3.14,<3.15" becomes "==3.14.*"), so the lock
     # is checked for the interpreter window it admits rather than for one spelling of it.
     locked_python = SpecifierSet(lock["requires-python"])
-    assert Version("3.14.5") in locked_python
+    assert Version("3.14.7") in locked_python
     assert Version("3.13.9") not in locked_python
     assert Version("3.15.0") not in locked_python
     for package in (runtime, agent_tools):

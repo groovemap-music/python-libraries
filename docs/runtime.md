@@ -1,7 +1,7 @@
 # `groovemap-runtime` contract
 
 `groovemap-runtime` supplies dependency-light runtime primitives through the `common` import
-package. Its supported interpreter line is Python 3.14, pinned to Python 3.14.5 in GrooveMap CI.
+package. Its supported interpreter line is Python 3.14, pinned to Python 3.14.7 in GrooveMap CI.
 The distribution does not install a console command.
 
 ## Stable imports
