@@ -147,6 +147,11 @@ exclude_lines = [
 
 [tool.commitizen]
 name = "cz_conventional_commits"
+# This repository was extracted from the GrooveMap monorepo and inherited its full history, so
+# an unscoped changelog would credit groovemap-runtime with dashboards, OAuth flows, and other
+# monorepo features these two distributions never contained. Start the changelog at the commit
+# before the extraction, so it covers this repository's own history and nothing earlier.
+changelog_start_rev = "ee3c44c35eb5f6d1eb8d57e6ee7e423d02cd8292"
 version_provider = "uv"
 version_scheme = "pep440"
 version_files = ["agent-tools/pyproject.toml"]

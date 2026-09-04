@@ -51,3 +51,17 @@ keeps both versions synchronized.
 `just bump` does not commit, tag, push, publish, or release. Registry publication remains disabled
 during migration. Package publication, Git tags, pushes, and repository visibility changes always
 require their own approval.
+
+A version bump is a coordinated step, not a per-change one. Every consumer in the compatibility
+matrix requires an exact version (`groovemap-runtime==<version>`) alongside its immutable commit
+pin, so raising the version here makes those requirements unsatisfiable until each consumer
+raises its pin in the same wave. The consumer-matrix rehearsal proves it: a bump landed on its
+own fails every consumer's `install-check` with `no version of groovemap-runtime==<old version>`.
+Feature work therefore records itself under `## Unreleased` in the changelog and leaves both
+versions alone. Commitizen rewrites that section from the conventional commit subjects when the
+coordinated release runs `just bump`, so it is never hand-maintained past a release.
+
+Commitizen's changelog starts at `changelog_start_rev`, the commit before the monorepo
+extraction. This repository inherited the monorepo's full history, so an unscoped changelog
+would credit these two distributions with dashboards, OAuth flows, and other features they never
+contained.

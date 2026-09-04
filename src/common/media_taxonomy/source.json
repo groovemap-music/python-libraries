@@ -1,0 +1,7 @@
+{
+  "repository": "groovemap-music/design",
+  "commit": "5e89a70f32973d0ad32da01c31695cf004d832f7",
+  "path": "taxonomy/media/v1/media-taxonomy.json",
+  "vendored_as": "src/common/media_taxonomy/media-taxonomy.json",
+  "sha256": "73677c6e577a9098136582539f5515814b8b73e4069a74fd6424d6b74e4553ac"
+}
