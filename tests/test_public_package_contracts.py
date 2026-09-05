@@ -38,6 +38,7 @@ RUNTIME_EXPORTS = {
     "families_of",
     "family_ids",
     "flatten_descriptions",
+    "flush_span",
     "get_meter",
     "get_tracer",
     "inject_headers",

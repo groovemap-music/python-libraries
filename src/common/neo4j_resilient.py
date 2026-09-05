@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from neo4j import AsyncGraphDatabase, GraphDatabase
 from neo4j.exceptions import Neo4jError, ServiceUnavailable, SessionExpired
 
-from common import runtime_metrics
+from common import runtime_metrics, tracing
 
 from .db_resilience import (
     AsyncResilientConnection,
@@ -93,8 +93,9 @@ class ResilientNeo4jDriver(ResilientConnection[Any]):
         started = perf_counter()
         error_type: str | None = None
         try:
-            driver = self.get_connection()
-            return driver.session(**kwargs)
+            with tracing.db_span("neo4j", "session"):
+                driver = self.get_connection()
+                return driver.session(**kwargs)
         except Exception as exc:
             error_type = runtime_metrics.error_type_of(exc)
             raise
@@ -179,9 +180,10 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
         started = perf_counter()
         error_type: str | None = None
         try:
-            driver = await self.get_connection()
-            async with driver.session(**kwargs) as session:
-                yield session
+            with tracing.db_span("neo4j", "session"):
+                driver = await self.get_connection()
+                async with driver.session(**kwargs) as session:
+                    yield session
         except Exception as exc:
             error_type = runtime_metrics.error_type_of(exc)
             raise

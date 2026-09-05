@@ -48,7 +48,7 @@ if TYPE_CHECKING:
         shutdown_telemetry,
         start_event_loop_monitor,
     )
-    from common.tracing import extract_context, get_tracer, inject_headers
+    from common.tracing import extract_context, flush_span, get_tracer, inject_headers
 
 
 _EXPORTS: dict[str, tuple[str, str]] = {
@@ -100,6 +100,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "shutdown_telemetry": ("common.telemetry", "shutdown_telemetry"),
     "start_event_loop_monitor": ("common.telemetry", "start_event_loop_monitor"),
     "extract_context": ("common.tracing", "extract_context"),
+    "flush_span": ("common.tracing", "flush_span"),
     "get_tracer": ("common.tracing", "get_tracer"),
     "inject_headers": ("common.tracing", "inject_headers"),
 }

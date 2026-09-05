@@ -21,7 +21,7 @@ from an implementation module, when a name appears here.
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
 | RabbitMQ | `AsyncResilientRabbitMQ`, `ResilientRabbitMQConnection`, `process_message_with_retry` |
 | Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx`, `start_event_loop_monitor` |
-| Tracing | `get_tracer`, `inject_headers`, `extract_context` |
+| Tracing | `get_tracer`, `inject_headers`, `extract_context`, `flush_span` |
 
 These imports are lazy. Importing `common` does not load optional database, broker, metrics, or
 OpenTelemetry clients until the corresponding capability is requested. Other names in `common.*`
@@ -241,13 +241,48 @@ endpoint pays only for one no-op instrument per metric.
 | `groovemap.pipeline.reconnects` | counter | `system` | every resilient connection wrapper, on each reconnect |
 | `groovemap.pipeline.circuit_breaker.state` | observable gauge | `system` | every live `CircuitBreaker`; 0 closed, 1 half-open, 2 open |
 | `messaging.client.consumed.messages` | counter | `messaging.system`, `messaging.destination.name`, `messaging.operation.name`, `error.type` on failure | `process_message_with_retry` |
-| `messaging.client.operation.duration` | histogram, seconds | same as the message counters | `process_message_with_retry` |
+| `messaging.client.sent.messages` | counter | same, with `messaging.operation.name` `send` | the RabbitMQ wrappers' `publish` |
+| `messaging.client.operation.duration` | histogram, seconds | same as the message counters | `process_message_with_retry` and `publish` |
 
 `db.operation.name` is a short verb (`session`, `execute`). SQL and Cypher text, record ids, and
 hostnames are never attribute values. `CircuitBreakerConfig` takes an optional `system` label for
 the gauge; it defaults to the lowercased breaker `name`, so name a breaker after its backing
 system or set `system` explicitly. `ResilientConnection` and `AsyncResilientConnection` take the
 same optional `system` keyword for the reconnect counter.
+
+### Spans the wrappers emit for free
+
+The same choke points open spans once a `TracerProvider` is live. Nothing else in a service has
+to change, and with tracing off every one of them is a no-op.
+
+| Span | Kind | Attributes | Opened by |
+| --- | --- | --- | --- |
+| `{db.operation.name} {db.system.name}` | `CLIENT` | `db.system.name`, `db.operation.name`, `error.type` on failure | PostgreSQL pools, Neo4j drivers, `execute_sql` |
+| `publish {destination}` | `PRODUCER` | `messaging.system`, `messaging.destination.name`, `messaging.operation.name` | the RabbitMQ wrappers' `publish` |
+| `process {destination}` | `CONSUMER` | the same three, plus `groovemap.pipeline.retry.count` after a retry | `process_message_with_retry` |
+| `flush {store} {entity}` | `INTERNAL` | `db.system.name`, `groovemap.entity` | `flush_span`, in a consumer's batch flush |
+
+The destination is the exchange name, or the routing key when publishing through the default
+exchange. Both are configuration, never a per-message value, so the span name stays
+low-cardinality. A statement is never attached to a span, and a failure sets status `ERROR` with
+`error.type` only: no message, no stack trace, no span event carrying a payload.
+
+`ResilientRabbitMQConnection.publish(routing_key, body, *, exchange="", properties=None,
+mandatory=False)` and `AsyncResilientRabbitMQ.publish(message, routing_key, *, exchange=None)`
+inject `traceparent` and `tracestate` into the outbound message headers, and
+`process_message_with_retry` extracts them, which is what puts an extractor's publish and a
+consumer's processing in one trace. The synchronous path copies the `BasicProperties` it is
+given before injecting, so a publisher that reuses one properties object does not pin every
+later message to the first message's trace.
+
+Retries never nest spans. One delivery is one `process` span however many attempts it took, and
+the attempts are reported as `groovemap.pipeline.retry.count`, an integer, and only when there
+was more than one.
+
+`flush_span(store, entity, links=None)` is for a consumer's batch flush. Pass the span contexts
+of the messages in the batch — `span.get_span_context()` from each delivery, or ready-made
+`Link` objects — and at most 64 are attached, because a batch of ten thousand rows would
+otherwise carry ten thousand links into the collector.
 
 ## Media taxonomy boundary
 

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 import psycopg
 from psycopg.errors import DatabaseError, InterfaceError, OperationalError
 
-from common import runtime_metrics
+from common import runtime_metrics, tracing
 
 from .db_resilience import (
     AsyncResilientConnection,
@@ -195,7 +195,7 @@ class ResilientPostgreSQLPool:
         started = perf_counter()
         error_type: str | None = None
         try:
-            with self._pooled_connection() as conn:
+            with tracing.db_span("postgresql", "session"), self._pooled_connection() as conn:
                 yield conn
         except Exception as exc:
             error_type = runtime_metrics.error_type_of(exc)
@@ -599,8 +599,9 @@ class AsyncPostgreSQLPool:
         started = perf_counter()
         error_type: str | None = None
         try:
-            async with self._pooled_connection() as conn:
-                yield conn
+            with tracing.db_span("postgresql", "session"):
+                async with self._pooled_connection() as conn:
+                    yield conn
         except Exception as exc:
             error_type = runtime_metrics.error_type_of(exc)
             raise
