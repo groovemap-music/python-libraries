@@ -20,7 +20,8 @@ from an implementation module, when a name appears here.
 | PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL`, `ResilientPostgreSQLPool` |
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
 | RabbitMQ | `AsyncResilientRabbitMQ`, `ResilientRabbitMQConnection`, `process_message_with_retry` |
-| Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx` |
+| Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx`, `start_event_loop_monitor` |
+| Tracing | `get_tracer`, `inject_headers`, `extract_context`, `flush_span` |
 
 These imports are lazy. Importing `common` does not load optional database, broker, metrics, or
 OpenTelemetry clients until the corresponding capability is requested. Other names in `common.*`
@@ -35,7 +36,7 @@ imports it during migration.
 | --- | --- | --- |
 | `metrics` | `prometheus-client` | Serving `/metrics` from `HealthServer` |
 | `neo4j` | Neo4j driver | Neo4j connection and retry helpers |
-| `otel` | OpenTelemetry API, SDK, and the OTLP HTTP/protobuf exporter | Recording and exporting metrics |
+| `otel` | OpenTelemetry API, SDK, the OTLP HTTP/protobuf exporter, and the system-metrics instrumentation | Recording and exporting metrics and spans, and the process view |
 | `otel-http` | FastAPI and httpx OpenTelemetry instrumentation | Instrumenting inbound and outbound HTTP |
 | `postgres` | Psycopg | PostgreSQL pools and query execution |
 | `rabbitmq` | aio-pika and pika | Async and synchronous broker resilience |
@@ -83,11 +84,14 @@ server during import and does not create application-specific metrics.
 ## Telemetry boundary
 
 `setup_telemetry(service_name, *, service_version=None)` installs one process-wide
-`MeterProvider` and returns it. `shutdown_telemetry(timeout_s=5.0)` force-flushes and shuts it
-down. `get_meter(name, version=None)` returns a meter for registering instruments. The library
-configures transport and resource only; every metric is registered by its consumer.
+`MeterProvider` and one process-wide `TracerProvider`, both built from the same resource, and
+returns the meter provider. `shutdown_telemetry(timeout_s=5.0)` force-flushes and shuts both
+down. `get_meter(name, version=None)` returns a meter for registering instruments and
+`get_tracer(name, version=None)` returns a tracer for opening spans. The library configures
+transport, resource, sampler, and propagator only; every metric and every domain span is
+registered by its consumer.
 
-Metrics are pushed over OTLP HTTP/protobuf. The runtime never exposes a Prometheus scrape
+Both signals are pushed over OTLP HTTP/protobuf. The runtime never exposes a Prometheus scrape
 endpoint for OpenTelemetry metrics, and reads only standard OpenTelemetry environment
 variables:
 
@@ -95,7 +99,11 @@ variables:
 | --- | --- | --- |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector base URL, for example `http://otel-collector:4318` | unset, which disables export |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Metrics-only endpoint override | falls back to `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Traces-only endpoint override | falls back to `OTEL_EXPORTER_OTLP_ENDPOINT` |
 | `OTEL_METRICS_EXPORTER` | `otlp` or `none` | `otlp` |
+| `OTEL_TRACES_EXPORTER` | `otlp` or `none` | `otlp` |
+| `OTEL_TRACES_SAMPLER` | Sampler name the SDK understands | `parentbased_traceidratio` |
+| `OTEL_TRACES_SAMPLER_ARG` | Sampling ratio for the ratio samplers | `1.0` |
 | `OTEL_SDK_DISABLED` | `true` makes the SDK itself a no-op, so nothing is recorded even when an endpoint is set | `false` |
 | `OTEL_METRIC_EXPORT_INTERVAL` | Push interval in milliseconds | SDK default |
 | `OTEL_SERVICE_NAME` | `service.name`, overriding the `service_name` argument | the `service_name` argument |
@@ -103,11 +111,14 @@ variables:
 
 Behavior the consumer can rely on:
 
-- Telemetry never fails startup. A missing endpoint, `OTEL_METRICS_EXPORTER=none`, an absent
-  `otel` extra, or a malformed configuration all fall back to a no-op `MeterProvider` and log
-  one line instead of raising. Without the extra the fallback is a local stand-in, so nothing
-  in `common` requires an `opentelemetry` package to be installed at all.
-- `setup_telemetry` is idempotent. A second call returns the provider the first installed
+- Telemetry never fails startup. A missing endpoint, `OTEL_METRICS_EXPORTER=none`,
+  `OTEL_TRACES_EXPORTER=none`, an absent `otel` extra, or a malformed configuration all fall
+  back to a no-op provider for the affected signal and log one line instead of raising. Without
+  the extra the fallback is a local stand-in, so nothing in `common` requires an
+  `opentelemetry` package to be installed at all.
+- The two signals are independent. Metrics can export while tracing is off and the other way
+  round; only the endpoint is shared.
+- `setup_telemetry` is idempotent. A second call returns the providers the first installed
   without building a second exporter.
 - Environment wins over code. `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` override the
   `service.name` and `service.version` the bootstrap derives from its arguments.
@@ -115,33 +126,108 @@ Behavior the consumer can rely on:
   a service whose deployment name differs from its distribution name should pass it
   explicitly, and the attribute is omitted when neither resolves.
 - Export temporality is cumulative, so a Prometheus-backed collector reads counters correctly.
-- One-shot processes must call `shutdown_telemetry` before exiting or the periodic reader drops
-  everything recorded since its last push. It is safe without a prior `setup_telemetry`, safe
-  to call twice, and never raises.
+- One-shot processes must call `shutdown_telemetry` before exiting or the periodic metric reader
+  and the batch span processor drop everything recorded since their last push. Spans are flushed
+  and shut down before metrics, so a process that dies mid-shutdown loses the cheaper signal. It
+  is safe without a prior `setup_telemetry`, safe to call twice, and never raises.
 
-Only metrics are configured today. Tracing is a deliberate non-goal of this boundary and would
-be added as a sibling provider built from the same resource.
+### Tracing boundary
+
+Spans go to the same collector over OTLP HTTP/protobuf through a `BatchSpanProcessor`. Tracing
+is configured entirely from the environment variables above, so a service turns it on by
+setting an endpoint and nothing else.
+
+- The sampler is the SDK's env-configured sampler. The bootstrap defaults `OTEL_TRACES_SAMPLER`
+  to `parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG` to `1.0`, so a deployment only
+  ever sets the ratio: dev keeps `1.0`, production turns it down. An operator value always wins,
+  and a blank value counts as unset. A ratio of `0` drops root spans while a sampled parent
+  still keeps its children, so a trace that starts upstream stays whole.
+- The global propagator is W3C TraceContext plus baggage. `OTEL_PROPAGATORS` still wins when an
+  operator sets it.
+- `get_tracer(name, version=None)` returns a tracer from the installed provider, or a no-op
+  tracer before `setup_telemetry` and without the `otel` extra.
+- `inject_headers(headers)` writes `traceparent` and `tracestate` into a mutable header mapping
+  and returns it; `extract_context(headers)` reads them back and returns a context to pass as
+  `start_as_current_span(..., context=...)`, or `None` when the headers carry no readable
+  context. Both accept `str` and `bytes` values, so an AMQP header dict round-trips unchanged,
+  and both are no-ops without the extra. A malformed `traceparent` starts a new trace rather
+  than failing the message that delivered it.
+
+Span names are low-cardinality by construction and follow the GrooveMap OpenTelemetry
+conventions:
+
+| Span | Name | Kind |
+| --- | --- | --- |
+| HTTP server and client | from the instrumentors, route-templated | `SERVER`, `CLIENT` |
+| Database operation | `{db.operation.name} {db.system.name}` | `CLIENT` |
+| Broker publish | `publish {messaging.destination.name}` | `PRODUCER` |
+| Broker consume | `process {messaging.destination.name}` | `CONSUMER` |
+| Batch flush | `flush {store} {entity}` | `INTERNAL` |
+
+Attribute values come from the same closed sets the metric attributes use. A span never carries
+a statement, an id, a file name, or free text, and an error sets status `ERROR` with `error.type`
+only. Span metrics (call counts and duration per span name) are derived by the collector, never
+emitted by a service.
 
 ### HTTP instrumentation
 
 `instrument_fastapi_app(app, *, excluded_urls="health,ready,metrics")` emits
-`http.server.request.duration` with `http.route` and `http.response.status_code`. The route is
-the templated path (`/artists/{artist_id}`), never the raw one, so the attribute stays
-low-cardinality; `/health` and `/ready` are excluded by default because probes would otherwise
-dominate the histogram.
+`http.server.request.duration` with `http.route` and `http.response.status_code`, and a `SERVER`
+span per request. The route is the templated path (`/artists/{artist_id}`), never the raw one,
+so both the attribute and the span name stay low-cardinality; `/health` and `/ready` are
+excluded by default because probes would otherwise dominate the histogram.
 
 `instrument_httpx(client=None)` emits `http.client.request.duration` with `server.address` and
-the response status code. Pass a client to instrument only that client, or nothing to
-instrument every httpx client in the process.
+the response status code, and a `CLIENT` span per request that writes `traceparent` onto the
+outbound request. Pass a client to instrument only that client, or nothing to instrument every
+httpx client in the process.
 
 Both need the `otel-http` extra. Without it each returns `False` after logging one line, so a
 service that has not installed the extra still starts and serves normally. Both return `True`
 when instrumentation was applied. Call them after `setup_telemetry` so they bind to the
-configured provider.
+configured providers; spans appear only once a `TracerProvider` is live.
 
 Both default `OTEL_SEMCONV_STABILITY_OPT_IN` to `http` before the first instrumentation
 initializes. The contrib packages otherwise emit the pre-stable names (`http.server.duration`
 in milliseconds). An operator value wins; a blank value counts as unset.
+
+### Runtime metrics
+
+`setup_telemetry` also installs `opentelemetry-instrumentation-system-metrics` with a
+process-scoped configuration, so every service reports its own CPU, memory, threads, file
+descriptors, and garbage collection without writing a line. No `system.*` host metric is
+collected: a host is scraped once by node-exporter, and a service reporting host numbers would
+multiply them by however many containers share the machine.
+
+These are the instrument names the pinned instrumentor version emits, and the Prometheus names
+the collector's remote-write translation produces from them. The deployment metric catalog
+copies this list, so change it here first.
+
+| Instrument | Kind, unit | Attributes | Prometheus name |
+| --- | --- | --- | --- |
+| `process.cpu.time` | observable counter, seconds | `type` (`user`, `system`) | `process_cpu_time_seconds_total` |
+| `process.cpu.utilization` | observable gauge, ratio | none | `process_cpu_utilization_ratio` |
+| `process.memory.usage` | observable up-down counter, bytes | none | `process_memory_usage_bytes` |
+| `process.memory.virtual` | observable up-down counter, bytes | none | `process_memory_virtual_bytes` |
+| `process.thread.count` | observable up-down counter | none | `process_thread_count` |
+| `process.open_file_descriptor.count` | observable up-down counter | none | `process_open_file_descriptor_count` |
+| `process.context_switches` | observable counter | `type` (`involuntary`, `voluntary`) | `process_context_switches_total` |
+| `cpython.gc.collections` | observable counter, collections | `generation`, `cpython.gc.generation` | `cpython_gc_collections_total` |
+| `groovemap.runtime.event_loop.lag` | histogram, seconds | none | `groovemap_runtime_event_loop_lag_seconds` |
+
+Two of them are platform-conditional and simply absent where the interpreter or the operating
+system cannot supply them: `process.open_file_descriptor.count` is not emitted on Windows, and
+the `cpython.gc.*` instruments are not emitted on PyPy. Instruments are registered against the
+configured provider only, so a service with no endpoint pays nothing.
+
+`start_event_loop_monitor(interval_s=1.0)` starts the one runtime signal no library provides.
+It samples how much longer each `interval_s` sleep actually took, which is the time the loop
+could not run a ready callback, and records it into `groovemap.runtime.event_loop.lag` with
+explicit boundaries from one millisecond to five seconds. Call it from the service's running
+loop after `setup_telemetry`. It returns the sampling task, or `None` when there is nothing to
+sample into: before `setup_telemetry`, with metrics export off, without the `otel` extra, or
+outside a running loop. It is idempotent per loop, never raises, and `shutdown_telemetry`
+cancels it.
 
 ### Metrics the wrappers emit for free
 
@@ -155,13 +241,48 @@ endpoint pays only for one no-op instrument per metric.
 | `groovemap.pipeline.reconnects` | counter | `system` | every resilient connection wrapper, on each reconnect |
 | `groovemap.pipeline.circuit_breaker.state` | observable gauge | `system` | every live `CircuitBreaker`; 0 closed, 1 half-open, 2 open |
 | `messaging.client.consumed.messages` | counter | `messaging.system`, `messaging.destination.name`, `messaging.operation.name`, `error.type` on failure | `process_message_with_retry` |
-| `messaging.client.operation.duration` | histogram, seconds | same as the message counters | `process_message_with_retry` |
+| `messaging.client.sent.messages` | counter | same, with `messaging.operation.name` `send` | the RabbitMQ wrappers' `publish` |
+| `messaging.client.operation.duration` | histogram, seconds | same as the message counters | `process_message_with_retry` and `publish` |
 
 `db.operation.name` is a short verb (`session`, `execute`). SQL and Cypher text, record ids, and
 hostnames are never attribute values. `CircuitBreakerConfig` takes an optional `system` label for
 the gauge; it defaults to the lowercased breaker `name`, so name a breaker after its backing
 system or set `system` explicitly. `ResilientConnection` and `AsyncResilientConnection` take the
 same optional `system` keyword for the reconnect counter.
+
+### Spans the wrappers emit for free
+
+The same choke points open spans once a `TracerProvider` is live. Nothing else in a service has
+to change, and with tracing off every one of them is a no-op.
+
+| Span | Kind | Attributes | Opened by |
+| --- | --- | --- | --- |
+| `{db.operation.name} {db.system.name}` | `CLIENT` | `db.system.name`, `db.operation.name`, `error.type` on failure | PostgreSQL pools, Neo4j drivers, `execute_sql` |
+| `publish {destination}` | `PRODUCER` | `messaging.system`, `messaging.destination.name`, `messaging.operation.name` | the RabbitMQ wrappers' `publish` |
+| `process {destination}` | `CONSUMER` | the same three, plus `groovemap.pipeline.retry.count` after a retry | `process_message_with_retry` |
+| `flush {store} {entity}` | `INTERNAL` | `db.system.name`, `groovemap.entity` | `flush_span`, in a consumer's batch flush |
+
+The destination is the exchange name, or the routing key when publishing through the default
+exchange. Both are configuration, never a per-message value, so the span name stays
+low-cardinality. A statement is never attached to a span, and a failure sets status `ERROR` with
+`error.type` only: no message, no stack trace, no span event carrying a payload.
+
+`ResilientRabbitMQConnection.publish(routing_key, body, *, exchange="", properties=None,
+mandatory=False)` and `AsyncResilientRabbitMQ.publish(message, routing_key, *, exchange=None)`
+inject `traceparent` and `tracestate` into the outbound message headers, and
+`process_message_with_retry` extracts them, which is what puts an extractor's publish and a
+consumer's processing in one trace. The synchronous path copies the `BasicProperties` it is
+given before injecting, so a publisher that reuses one properties object does not pin every
+later message to the first message's trace.
+
+Retries never nest spans. One delivery is one `process` span however many attempts it took, and
+the attempts are reported as `groovemap.pipeline.retry.count`, an integer, and only when there
+was more than one.
+
+`flush_span(store, entity, links=None)` is for a consumer's batch flush. Pass the span contexts
+of the messages in the batch — `span.get_span_context()` from each delivery, or ready-made
+`Link` objects — and at most 64 are attached, because a batch of ten thousand rows would
+otherwise carry ten thousand links into the collector.
 
 ## Media taxonomy boundary
 
