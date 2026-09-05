@@ -18,16 +18,23 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-# Every standard OpenTelemetry variable that changes what the SDK records or exports.
+# Every standard OpenTelemetry variable that changes what the SDK records or exports. The
+# tracing bootstrap also *writes* OTEL_TRACES_SAMPLER and OTEL_TRACES_SAMPLER_ARG when they are
+# unset, so leaving them in place would let one test's sampler decide another test's spans.
 OTEL_ENVIRONMENT = (
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
     "OTEL_METRICS_EXEMPLAR_FILTER",
     "OTEL_METRICS_EXPORTER",
     "OTEL_METRIC_EXPORT_INTERVAL",
+    "OTEL_PROPAGATORS",
     "OTEL_RESOURCE_ATTRIBUTES",
     "OTEL_SDK_DISABLED",
     "OTEL_SERVICE_NAME",
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_TRACES_SAMPLER",
+    "OTEL_TRACES_SAMPLER_ARG",
 )
 
 

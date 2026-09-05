@@ -40,7 +40,15 @@ if TYPE_CHECKING:
     from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL, ResilientPostgreSQLPool
     from common.query_debug import execute_sql, is_db_profiling, is_debug, log_cypher_query, log_sql_query
     from common.rabbitmq_resilient import AsyncResilientRabbitMQ, ResilientRabbitMQConnection, process_message_with_retry
-    from common.telemetry import get_meter, instrument_fastapi_app, instrument_httpx, setup_telemetry, shutdown_telemetry
+    from common.telemetry import (
+        get_meter,
+        instrument_fastapi_app,
+        instrument_httpx,
+        setup_telemetry,
+        shutdown_telemetry,
+        start_event_loop_monitor,
+    )
+    from common.tracing import extract_context, flush_span, get_tracer, inject_headers
 
 
 _EXPORTS: dict[str, tuple[str, str]] = {
@@ -90,6 +98,11 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "instrument_httpx": ("common.telemetry", "instrument_httpx"),
     "setup_telemetry": ("common.telemetry", "setup_telemetry"),
     "shutdown_telemetry": ("common.telemetry", "shutdown_telemetry"),
+    "start_event_loop_monitor": ("common.telemetry", "start_event_loop_monitor"),
+    "extract_context": ("common.tracing", "extract_context"),
+    "flush_span": ("common.tracing", "flush_span"),
+    "get_tracer": ("common.tracing", "get_tracer"),
+    "inject_headers": ("common.tracing", "inject_headers"),
 }
 
 __all__ = sorted(_EXPORTS)

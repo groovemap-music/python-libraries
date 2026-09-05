@@ -5,6 +5,7 @@ import contextlib
 import inspect
 import logging
 import re
+from copy import copy
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -12,11 +13,11 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import aio_pika
 from aio_pika import connect_robust
 from aio_pika.exceptions import AMQPChannelError, AMQPConnectionError, ConnectionClosed
-from pika import BlockingConnection, URLParameters
+from pika import BasicProperties, BlockingConnection, URLParameters
 from pika.exceptions import AMQPChannelError as PikaChannelError
 from pika.exceptions import AMQPConnectionError as PikaConnectionError
 
-from common import runtime_metrics
+from common import runtime_metrics, tracing
 
 from .db_resilience import (
     CircuitBreaker,
@@ -101,6 +102,38 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
             self._channel = connection.channel()
             return self._channel
 
+    def publish(self, routing_key: str, body: bytes, *, exchange: str = "", properties: Any = None, mandatory: bool = False) -> None:
+        """Publish one message through the resilient channel.
+
+        Times the publish, opens the PRODUCER span, and injects the W3C trace context into the
+        message headers, so the consumer that picks this message up joins this trace rather
+        than starting its own.
+
+        Args:
+            routing_key: Queue name for the default exchange, or the binding key otherwise.
+            body: Already-encoded message body.
+            exchange: Exchange name; the default exchange ("") routes straight to a queue.
+            properties: Optional ``BasicProperties``; a copy carries the trace context.
+            mandatory: Ask the broker to return an unroutable message rather than drop it.
+        """
+        destination = _publish_destination(exchange, routing_key)
+        started = perf_counter()
+        error_type: str | None = None
+        try:
+            with tracing.publish_span(destination):
+                self.channel().basic_publish(
+                    exchange=exchange,
+                    routing_key=routing_key,
+                    body=body,
+                    properties=_with_trace_context(properties),
+                    mandatory=mandatory,
+                )
+        except Exception as exc:
+            error_type = runtime_metrics.error_type_of(exc)
+            raise
+        finally:
+            runtime_metrics.record_sent_message(destination, perf_counter() - started, error_type)
+
     def close(self) -> None:
         """Close the RabbitMQ connection and channel."""
         with self._lock:
@@ -121,6 +154,43 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
                     logger.warning(f"⚠️ Error closing RabbitMQ connection: {e}")
                 finally:
                     self._connection = None
+
+
+def _publish_destination(exchange: str, routing_key: str) -> str:
+    """Return the low-cardinality destination a message was published to.
+
+    A named exchange is the destination; on the default exchange the routing key is the queue
+    name and takes its place. Both are configuration, never per-message values.
+    """
+    return exchange or routing_key or "unknown"
+
+
+def _inject_into_message(message: Any) -> None:
+    """Write the current trace context into an aio-pika message's headers, in place.
+
+    Unlike the synchronous path there is nothing to copy: an ``aio_pika.Message`` is built per
+    publish and owns its header dict, so injecting in place is what puts the context on the
+    wire.
+    """
+    headers = message.headers
+    if headers is None:  # pragma: no cover - aio-pika always initializes this to a dict
+        headers = {}
+        message.headers = headers
+    tracing.inject_headers(headers)
+
+
+def _with_trace_context(properties: Any) -> Any:
+    """Return a copy of ``properties`` whose headers carry the current trace context.
+
+    The properties object is copied rather than mutated: publishers commonly build one
+    ``BasicProperties`` and reuse it, and injecting in place would pin every later message to
+    the first message's trace.
+    """
+    carried = copy(properties) if properties is not None else BasicProperties()
+    headers = dict(getattr(carried, "headers", None) or {})
+    tracing.inject_headers(headers)
+    carried.headers = headers
+    return carried
 
 
 def _with_amqp_params(url: str, **params: str) -> str:
@@ -318,6 +388,34 @@ class AsyncResilientRabbitMQ:
         if callback in self._reconnect_callbacks:
             self._reconnect_callbacks.remove(callback)
 
+    async def publish(
+        self,
+        message: aio_pika.abc.AbstractMessage,
+        routing_key: str,
+        *,
+        exchange: aio_pika.abc.AbstractExchange | None = None,
+    ) -> Any:
+        """Publish one message through the resilient channel.
+
+        Times the publish, opens the PRODUCER span, and injects the W3C trace context into the
+        message's own headers, so the consumer that picks it up joins this trace. Without an
+        ``exchange`` the channel's default exchange is used, which routes ``routing_key``
+        straight to the queue of that name.
+        """
+        target = exchange if exchange is not None else (await self.channel()).default_exchange
+        destination = _publish_destination(getattr(target, "name", "") or "", routing_key)
+        started = perf_counter()
+        error_type: str | None = None
+        try:
+            with tracing.publish_span(destination):
+                _inject_into_message(message)
+                return await target.publish(message, routing_key=routing_key)
+        except Exception as exc:
+            error_type = runtime_metrics.error_type_of(exc)
+            raise
+        finally:
+            runtime_metrics.record_sent_message(destination, perf_counter() - started, error_type)
+
     async def close(self) -> None:
         """Close the RabbitMQ connection and channel."""
         if self._lock is None:
@@ -363,7 +461,12 @@ async def process_message_with_retry(
     backoff: ExponentialBackoff | None = None,
     requeue_on_error: bool = True,
 ) -> None:
-    """Process a message with retry logic and proper acknowledgment."""
+    """Process a message with retry logic and proper acknowledgment.
+
+    Opens one CONSUMER span for the whole logical operation, as a child of the context the
+    publisher wrote into the message headers. Retries do not nest spans: a retried message is
+    still one delivery, and the attempts are reported as an integer attribute instead.
+    """
     if backoff is None:
         backoff = ExponentialBackoff(initial_delay=1.0, max_delay=30.0)
 
@@ -373,49 +476,52 @@ async def process_message_with_retry(
     started = perf_counter()
     last_error_type: str | None = None
 
-    while retry_count < max_retries:
-        try:
-            # Process the message
-            if inspect.iscoroutinefunction(handler):
-                await handler(message)
-            else:
-                handler(message)
+    with tracing.consume_span(destination, getattr(message, "headers", None)) as span:
+        while retry_count < max_retries:
+            try:
+                # Process the message
+                if inspect.iscoroutinefunction(handler):
+                    await handler(message)
+                else:
+                    handler(message)
 
-            handler_succeeded = True
-            break
+                handler_succeeded = True
+                break
 
-        except Exception as e:
-            retry_count += 1
-            last_error_type = runtime_metrics.error_type_of(e)
+            except Exception as e:
+                retry_count += 1
+                last_error_type = runtime_metrics.error_type_of(e)
 
-            if retry_count < max_retries:
-                delay = backoff.get_delay(retry_count - 1)
-                logger.warning(f"⚠️ Message processing failed (attempt {retry_count}/{max_retries}): {e}. Retrying in {delay:.1f} seconds...")
-                await asyncio.sleep(delay)
-            else:
-                logger.error(f"❌ Message processing failed after {max_retries} attempts: {e}")
+                if retry_count < max_retries:
+                    delay = backoff.get_delay(retry_count - 1)
+                    logger.warning(f"⚠️ Message processing failed (attempt {retry_count}/{max_retries}): {e}. Retrying in {delay:.1f} seconds...")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"❌ Message processing failed after {max_retries} attempts: {e}")
 
-                # Nack the message (caller should not nack again)
-                try:
-                    if requeue_on_error:
-                        await message.nack(requeue=True)
-                    else:
-                        await message.nack(requeue=False)
-                except Exception as nack_err:
-                    logger.warning(f"⚠️ Failed to nack message after retries exhausted: {nack_err}")
+                    # Nack the message (caller should not nack again)
+                    try:
+                        if requeue_on_error:
+                            await message.nack(requeue=True)
+                        else:
+                            await message.nack(requeue=False)
+                    except Exception as nack_err:
+                        logger.warning(f"⚠️ Failed to nack message after retries exhausted: {nack_err}")
 
-                runtime_metrics.record_consumed_message(destination, perf_counter() - started, last_error_type)
+                    tracing.set_retry_count(span, retry_count)
+                    runtime_metrics.record_consumed_message(destination, perf_counter() - started, last_error_type)
+                    raise
+
+        tracing.set_retry_count(span, retry_count)
+        runtime_metrics.record_consumed_message(
+            destination,
+            perf_counter() - started,
+            None if handler_succeeded else last_error_type,
+        )
+
+        if handler_succeeded:
+            try:
+                await message.ack()
+            except Exception as e:
+                logger.error(f"❌ Failed to ack message after successful processing: {e}")
                 raise
-
-    runtime_metrics.record_consumed_message(
-        destination,
-        perf_counter() - started,
-        None if handler_succeeded else last_error_type,
-    )
-
-    if handler_succeeded:
-        try:
-            await message.ack()
-        except Exception as e:
-            logger.error(f"❌ Failed to ack message after successful processing: {e}")
-            raise

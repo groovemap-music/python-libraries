@@ -13,7 +13,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from common import runtime_metrics
+from common import runtime_metrics, tracing
 
 
 _logger = logging.getLogger(__name__)
@@ -177,9 +177,10 @@ async def execute_sql(cursor: Any, query: Any, params: Any = None) -> None:
     started = perf_counter()
     error_type: str | None = None
     try:
-        await cursor.execute(query, params)
-        if profiling:
-            await _try_sql_profile(cursor, query, params)
+        with tracing.db_span("postgresql", "execute"):
+            await cursor.execute(query, params)
+            if profiling:
+                await _try_sql_profile(cursor, query, params)
     except Exception as exc:
         error_type = runtime_metrics.error_type_of(exc)
         if profiling:

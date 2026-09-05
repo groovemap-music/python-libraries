@@ -12,14 +12,19 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opentelemetry.sdk.metrics import MeterProvider as SdkMeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace import TracerProvider as SdkTracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import SpanKind
 
-from common import telemetry
+from common import telemetry, tracing
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from opentelemetry.sdk.metrics.export import Metric
+    from opentelemetry.sdk.trace import ReadableSpan
 
 
 FASTAPI_INSTRUMENTOR_MODULE = "opentelemetry.instrumentation.fastapi"
@@ -28,11 +33,17 @@ SERVER_DURATION = "http.server.request.duration"
 
 
 class Collector:
-    """An in-memory provider whose recorded metrics can be read back by name."""
+    """In-memory providers whose recorded metrics and spans can be read back."""
 
     def __init__(self) -> None:
         self.reader = InMemoryMetricReader()
         self.provider = SdkMeterProvider(metric_readers=[self.reader])
+        self.span_exporter = InMemorySpanExporter()
+        self.tracer_provider = SdkTracerProvider()
+        self.tracer_provider.add_span_processor(SimpleSpanProcessor(self.span_exporter))
+
+    def spans(self) -> tuple[ReadableSpan, ...]:
+        return self.span_exporter.get_finished_spans()
 
     def metrics(self) -> dict[str, Metric]:
         data = self.reader.get_metrics_data()
@@ -55,9 +66,12 @@ def collector(monkeypatch: pytest.MonkeyPatch) -> Iterator[Collector]:
     """Make the helpers bind to an in-memory provider instead of the global one."""
     active = Collector()
     monkeypatch.setattr(telemetry, "_provider", active.provider)
+    monkeypatch.setattr(telemetry, "_tracer_provider", active.tracer_provider)
     assert telemetry._active_provider() is active.provider
+    assert telemetry.tracer_provider() is active.tracer_provider
     yield active
     monkeypatch.setattr(telemetry, "_provider", None)
+    monkeypatch.setattr(telemetry, "_tracer_provider", None)
 
 
 def build_app() -> FastAPI:
@@ -176,6 +190,52 @@ def test_httpx_helper_instruments_a_single_client(collector: Collector) -> None:
     assert recorded, f"expected a client duration metric, saw {sorted(collector.metrics())}"
     assert {attributes.get("server.address") for attributes in recorded} == {"catalog-api"}
     assert {attributes.get("http.response.status_code") for attributes in recorded} == {200}
+
+
+def test_fastapi_helper_records_a_route_templated_server_span(collector: Collector) -> None:
+    app = build_app()
+    telemetry.instrument_fastapi_app(app)
+
+    with TestClient(app) as client:
+        assert client.get("/artists/12345").status_code == 200
+
+    server_spans = [span for span in collector.spans() if span.kind is SpanKind.SERVER]
+    assert server_spans, f"expected a server span, saw {[span.name for span in collector.spans()]}"
+    assert {span.name for span in server_spans} == {"GET /artists/{artist_id}"}
+    assert "12345" not in " ".join(span.name for span in server_spans)
+    assert server_spans[0].attributes is not None
+    assert server_spans[0].attributes["http.route"] == "/artists/{artist_id}"
+
+
+def test_httpx_helper_records_a_client_span_that_propagates_the_trace(collector: Collector) -> None:
+    """An outbound call inside a server span must carry that trace to the peer."""
+    import httpx
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"artist_id": "9"})
+
+    transport = httpx.MockTransport(handler)
+    tracer = tracing.get_tracer("test")
+    with (
+        tracer.start_as_current_span("GET /artists/{artist_id}", kind=SpanKind.SERVER) as server,
+        httpx.Client(transport=transport, base_url="http://catalog-api") as client,
+    ):
+        assert telemetry.instrument_httpx(client) is True
+        assert client.get("/artists/9").status_code == 200
+        expected = server.get_span_context()
+
+    (request,) = seen
+    traceparent = request.headers.get("traceparent")
+    assert traceparent is not None, f"outbound headers carried no context: {dict(request.headers)}"
+    assert traceparent.split("-")[1] == format(expected.trace_id, "032x")
+
+    client_spans = [span for span in collector.spans() if span.kind is SpanKind.CLIENT]
+    assert client_spans, f"expected a client span, saw {[span.name for span in collector.spans()]}"
+    assert client_spans[0].context is not None
+    assert client_spans[0].context.trace_id == expected.trace_id
 
 
 def test_httpx_helper_is_a_safe_noop_without_the_otel_http_extra(
