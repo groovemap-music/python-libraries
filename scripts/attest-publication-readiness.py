@@ -17,7 +17,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "groovemap-music/python-libraries"
 REPOSITORY_URL = f"https://github.com/{REPOSITORY}"
-AUTOMATION_REVISION = "2f34a4da5c552bc23c75edd3d8d81be0a4b3271c"
+AUTOMATION_REVISION = "833cb464507678c38ab78bd4718ce697399463e9"
 FORBIDDEN_HISTORY_PATHS = (
     re.compile(r"(^|/)\.planning(/|$)"),
     re.compile(r"(^|/)docs/superpowers/(plans|specs)(/|$)"),
