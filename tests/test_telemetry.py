@@ -11,17 +11,20 @@ from opentelemetry.metrics import NoOpMeterProvider
 from opentelemetry.sdk.metrics import Meter as SdkMeter
 from opentelemetry.sdk.metrics import MeterProvider as SdkMeterProvider
 from opentelemetry.sdk.metrics.export import AggregationTemporality, MetricExporter, MetricExportResult
+from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 from common import telemetry
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
     from opentelemetry.sdk.metrics.export import MetricsData
+    from opentelemetry.sdk.trace import ReadableSpan
 
 
 EXPORTER_IMPORT_PATH = "opentelemetry.exporter.otlp.proto.http.metric_exporter"
+SPAN_EXPORTER_IMPORT_PATH = "opentelemetry.exporter.otlp.proto.http.trace_exporter"
 
 
 class CapturingExporter(MetricExporter):
@@ -45,14 +48,36 @@ class CapturingExporter(MetricExporter):
         self.shutdown_calls += 1
 
 
+PROVIDER_HANDLES = ("_provider", "_sdk_provider", "_tracer_provider", "_sdk_tracer_provider")
+
+
+class DiscardingSpanExporter(SpanExporter):
+    """Stands in for the OTLP span exporter so this suite never opens a socket."""
+
+    def __init__(self, **_kwargs: Any) -> None:
+        pass
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:  # noqa: ARG002
+        return SpanExportResult.SUCCESS
+
+    def shutdown(self) -> None:
+        """Discard the shutdown."""
+
+
+@pytest.fixture(autouse=True)
+def discarded_spans(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the metrics suite off the network: setup_telemetry also configures tracing now."""
+    monkeypatch.setattr(f"{SPAN_EXPORTER_IMPORT_PATH}.OTLPSpanExporter", DiscardingSpanExporter)
+
+
 @pytest.fixture(autouse=True)
 def isolated_telemetry(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Give every test a pristine telemetry module; conftest clears the environment."""
-    monkeypatch.setattr(telemetry, "_provider", None)
-    monkeypatch.setattr(telemetry, "_sdk_provider", None)
+    for name in PROVIDER_HANDLES:
+        monkeypatch.setattr(telemetry, name, None)
     yield
-    monkeypatch.setattr(telemetry, "_provider", None)
-    monkeypatch.setattr(telemetry, "_sdk_provider", None)
+    for name in PROVIDER_HANDLES:
+        monkeypatch.setattr(telemetry, name, None)
 
 
 @pytest.fixture
@@ -84,7 +109,7 @@ def test_setup_without_an_endpoint_keeps_the_noop_provider(caplog: pytest.LogCap
         provider = telemetry.setup_telemetry("extractor-discogs")
 
     assert isinstance(provider, NoOpMeterProvider)
-    disabled_lines = [record for record in caplog.records if "disabled" in record.getMessage()]
+    disabled_lines = [record for record in caplog.records if "metrics disabled" in record.getMessage()]
     assert len(disabled_lines) == 1
     assert "OTEL_EXPORTER_OTLP_ENDPOINT is unset" in disabled_lines[0].getMessage()
     assert disabled_lines[0].levelno == logging.INFO
