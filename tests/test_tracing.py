@@ -464,6 +464,33 @@ def test_the_helpers_are_noops_without_the_otel_api(monkeypatch: pytest.MonkeyPa
     telemetry.shutdown_telemetry()
 
 
+def test_the_wrapper_span_helpers_are_noops_without_the_otel_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The resilience wrappers import common.tracing at module scope, so these run everywhere."""
+    monkeypatch.setattr(telemetry, "metrics", None)
+    monkeypatch.setattr(telemetry, "trace", None)
+
+    with tracing.db_span("postgresql", "session") as span:
+        assert isinstance(span, telemetry._NoOpSpan)
+        span.set_attribute("db.system.name", "postgresql")
+    with tracing.publish_span("graphinator") as producer:
+        headers: dict[str, Any] = {}
+        tracing.inject_headers(headers)
+        assert headers == {}, "there is no context to propagate without the API"
+        assert isinstance(producer, telemetry._NoOpSpan)
+    with tracing.consume_span("discogs-releases", SAMPLED_PARENT) as consumer:
+        tracing.set_retry_count(consumer, 2)
+        assert isinstance(consumer, telemetry._NoOpSpan)
+    with tracing.flush_span("neo4j", "release", links=[object(), object()]) as flush:
+        assert isinstance(flush, telemetry._NoOpSpan)
+
+
+def test_a_failing_body_still_propagates_without_the_otel_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(telemetry, "trace", None)
+
+    with pytest.raises(ValueError, match="bad payload"), tracing.db_span("neo4j", "session"):
+        raise ValueError("bad payload")
+
+
 def test_public_names_are_exported_lazily_from_common() -> None:
     import common
 
