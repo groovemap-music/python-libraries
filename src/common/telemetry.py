@@ -23,16 +23,23 @@ a broken SDK configuration all fall back to no-op providers and log instead of r
 whole module imports and works without any ``opentelemetry`` package installed, because a
 consumer pinned to an older lockfile resolves this library without the extra.
 
+The bootstrap also turns on the process view — CPU, memory, threads, file descriptors, and
+garbage collection — and offers an asyncio event-loop lag histogram, because a saturated
+consumer and an idle one look identical on every dashboard without them.
+
 Span helpers — ``get_tracer``, header injection and extraction, and the wrapper span shapes —
 live next door in :mod:`common.tracing`; this module owns provider lifecycle only.
 """
 
+import asyncio
 import logging
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from os import environ, getenv
 from threading import RLock
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
+from weakref import WeakKeyDictionary
 
 
 try:
@@ -53,6 +60,8 @@ trace: Any = _trace_api
 
 
 if TYPE_CHECKING:  # pragma: no cover
+    from asyncio import AbstractEventLoop, Task
+
     from opentelemetry.metrics import Meter, MeterProvider
     from opentelemetry.sdk.metrics import MeterProvider as SdkMeterProvider
     from opentelemetry.sdk.resources import Resource
@@ -70,6 +79,31 @@ _EXPORTER_DISABLED = "none"
 # value always wins; see _default_the_sampler.
 _DEFAULT_TRACES_SAMPLER = "parentbased_traceidratio"
 _DEFAULT_TRACES_SAMPLER_ARG = "1.0"
+
+# The scope this library's own instruments and spans are reported under.
+INSTRUMENTATION_SCOPE = "groovemap.runtime"
+
+# The process-scoped subset of the system-metrics instrumentor. No `system.` key appears here:
+# host metrics belong to node-exporter, and a service reporting them would multiply one host's
+# numbers by however many containers happen to run on it. The instrumentor decides the emitted
+# instrument names; docs/runtime.md records the ones the pinned version produces.
+RUNTIME_METRICS_CONFIG: dict[str, list[str] | None] = {
+    "cpython.gc.collections": None,
+    "process.context_switches": ["involuntary", "voluntary"],
+    "process.cpu.time": ["user", "system"],
+    "process.cpu.utilization": None,
+    "process.memory.usage": None,
+    "process.memory.virtual": None,
+    "process.open_file_descriptor.count": None,
+    "process.thread.count": None,
+}
+
+# Scheduling delay of an asyncio loop, the one runtime signal no library provides.
+EVENT_LOOP_LAG = "groovemap.runtime.event_loop.lag"
+
+# A healthy loop schedules within a millisecond; a saturated one takes seconds. The boundaries
+# span that range so both ends stay legible on a heatmap instead of piling into one bucket.
+EVENT_LOOP_LAG_BUCKETS = (0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)
 
 # Probe endpoints are excluded by default: they are polled constantly and would otherwise
 # dominate the request histogram without telling an operator anything.
@@ -203,6 +237,10 @@ _sdk_provider: SdkMeterProvider | None = None
 # call, so `_provider` alone is the "already configured" flag for the whole bootstrap.
 _tracer_provider: TracerProvider | None = None
 _sdk_tracer_provider: SdkTracerProvider | None = None
+
+# One event-loop sampler per loop. Keyed weakly so a finished loop's monitor is collectable
+# and a service that runs several loops in sequence gets a fresh one for each.
+_event_loop_monitors: WeakKeyDictionary[AbstractEventLoop, Task[None]] = WeakKeyDictionary()
 
 # Bumped whenever the installed provider changes. Callers that cache instruments compare it
 # so instruments built against an earlier (usually no-op) provider are rebuilt rather than
@@ -367,8 +405,29 @@ def _install_meter_provider(service_name: str, service_version: str | None) -> M
 
     if metrics is not None:
         metrics.set_meter_provider(_sdk_provider)
+    _install_runtime_metrics(_sdk_provider)
     logger.info("📊 OpenTelemetry metrics configured for %r exporting to %s", service_name, _configured_endpoint())
     return _sdk_provider
+
+
+def _install_runtime_metrics(provider: MeterProvider) -> bool:
+    """Emit the process view through the system-metrics instrumentor. Never raises.
+
+    Returns whether the instrumentation was applied. A failure here costs a service its CPU and
+    memory series, which is never a reason to fail its startup.
+    """
+    try:
+        from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor  # noqa: PLC0415
+    except ImportError:
+        logger.info("📊 Runtime metrics unavailable (install the 'otel' extra) — running without the process view")
+        return False
+
+    try:
+        SystemMetricsInstrumentor(config=RUNTIME_METRICS_CONFIG).instrument(meter_provider=provider)
+    except Exception:
+        logger.warning("⚠️ Could not install the runtime metrics instrumentation — running without the process view", exc_info=True)
+        return False
+    return True
 
 
 def _install_tracer_provider(service_name: str, service_version: str | None) -> TracerProvider:
@@ -417,10 +476,93 @@ def setup_telemetry(service_name: str, *, service_version: str | None = None) ->
         if _provider is not None:
             return _provider
 
+        # Before anything imports a contrib instrumentation: the contrib packages read this
+        # once, the first time any of them initializes, and the process view is an
+        # instrumentation too. Setting it only inside the HTTP helpers left them emitting the
+        # pre-stable names whenever the process view had already initialized the cache.
+        _opt_in_to_stable_http_semconv()
         _provider = _install_meter_provider(service_name, service_version)
         _tracer_provider = _install_tracer_provider(service_name, service_version)
         _generation += 1
         return _provider
+
+
+async def _sample_event_loop_lag(interval_s: float, histogram: Any) -> None:
+    """Record how much longer than ``interval_s`` each sleep actually took.
+
+    The difference is the time the loop spent unable to run a ready callback, which is the
+    definition of event-loop lag: a coroutine blocking the loop shows up here and nowhere else.
+    """
+    while True:
+        started = perf_counter()
+        await asyncio.sleep(interval_s)
+        lag = perf_counter() - started - interval_s
+        try:
+            histogram.record(max(lag, 0.0))
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Could not record %s", EVENT_LOOP_LAG, exc_info=True)
+
+
+def start_event_loop_monitor(interval_s: float = 1.0) -> Task[None] | None:
+    """Sample this loop's scheduling delay into the event-loop lag histogram.
+
+    Call it from the service's running loop once telemetry is configured. Returns the sampling
+    task, or None when there is nothing to sample into: before :func:`setup_telemetry`, with
+    metrics export off, without the ``otel`` extra, or outside a running loop. Idempotent per
+    loop — a second call returns the task the first started — and never raises. The task is
+    cancelled by :func:`shutdown_telemetry`.
+    """
+    with _lock:
+        recording = _sdk_provider is not None
+
+    if not recording:
+        logger.debug("Event-loop monitoring skipped: metrics are not being exported")
+        return None
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning("⚠️ start_event_loop_monitor was called outside a running event loop — not sampling")
+        return None
+
+    with _lock:
+        existing = _event_loop_monitors.get(loop)
+        if existing is not None and not existing.done():
+            return existing
+
+        try:
+            histogram = get_meter(INSTRUMENTATION_SCOPE).create_histogram(
+                EVENT_LOOP_LAG,
+                unit="s",
+                description="Delay between when the event loop should have run a callback and when it did.",
+                explicit_bucket_boundaries_advisory=list(EVENT_LOOP_LAG_BUCKETS),
+            )
+            monitor = loop.create_task(_sample_event_loop_lag(max(interval_s, 0.0), histogram), name="groovemap-event-loop-monitor")
+        except Exception:
+            logger.warning("⚠️ Could not start the event-loop monitor — running without the lag histogram", exc_info=True)
+            return None
+
+        _event_loop_monitors[loop] = monitor
+        return monitor
+
+
+def _stop_event_loop_monitors() -> None:
+    """Cancel every running event-loop sampler. Never raises."""
+    with _lock:
+        monitors = list(_event_loop_monitors.items())
+        _event_loop_monitors.clear()
+
+    for loop, monitor in monitors:
+        if monitor.done():
+            continue
+        try:
+            if loop.is_closed():
+                continue
+            # The caller may be shutting down from another thread, and cancelling a task is
+            # only safe from the loop that owns it.
+            loop.call_soon_threadsafe(monitor.cancel)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Could not cancel the event-loop monitor", exc_info=True)
 
 
 def tracer_provider() -> TracerProvider:
@@ -444,10 +586,11 @@ def get_meter(name: str, version: str | None = None) -> Meter:
 def _opt_in_to_stable_http_semconv() -> None:
     """Default the HTTP instrumentations to the stable metric names.
 
-    The contrib packages read this once, the first time an instrumentation initializes, so it
-    has to be set before the first ``instrument_*`` call. An explicit operator value wins; a
-    blank value counts as unset, because a compose file that declares the variable without a
-    value would otherwise silently pin the pre-stable metric names.
+    The contrib packages read this once, the first time ANY instrumentation initializes — the
+    system-metrics one included — so ``setup_telemetry`` sets it before installing anything and
+    each ``instrument_*`` helper sets it again for services that call them on their own. An
+    explicit operator value wins; a blank value counts as unset, because a compose file that
+    declares the variable without a value would otherwise silently pin the pre-stable names.
     """
     if not (environ.get(_SEMCONV_STABILITY_OPT_IN) or "").strip():
         environ[_SEMCONV_STABILITY_OPT_IN] = _STABLE_HTTP_SEMCONV
@@ -477,13 +620,16 @@ def shutdown_telemetry(timeout_s: float = 5.0) -> None:
 
     Spans are flushed before metrics: the batch span processor holds finished spans that
     describe the very work whose metrics the reader is about to push, and a one-shot process
-    that exits between the two flushes should lose the cheaper signal, not the trace.
+    that exits between the two flushes should lose the cheaper signal, not the trace. Any
+    event-loop monitor is cancelled first, so nothing is still recording while providers close.
 
     One-shot processes must call this before exiting; the periodic reader and the batch span
     processor would otherwise drop everything recorded since their last push. Safe to call
     without a prior :func:`setup_telemetry`, safe to call twice, and never raises.
     """
     global _generation, _provider, _sdk_provider, _sdk_tracer_provider, _tracer_provider
+
+    _stop_event_loop_monitors()
 
     with _lock:
         provider = _sdk_provider

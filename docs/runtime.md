@@ -20,7 +20,7 @@ from an implementation module, when a name appears here.
 | PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL`, `ResilientPostgreSQLPool` |
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
 | RabbitMQ | `AsyncResilientRabbitMQ`, `ResilientRabbitMQConnection`, `process_message_with_retry` |
-| Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx` |
+| Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx`, `start_event_loop_monitor` |
 | Tracing | `get_tracer`, `inject_headers`, `extract_context` |
 
 These imports are lazy. Importing `common` does not load optional database, broker, metrics, or
@@ -36,7 +36,7 @@ imports it during migration.
 | --- | --- | --- |
 | `metrics` | `prometheus-client` | Serving `/metrics` from `HealthServer` |
 | `neo4j` | Neo4j driver | Neo4j connection and retry helpers |
-| `otel` | OpenTelemetry API, SDK, and the OTLP HTTP/protobuf exporter | Recording and exporting metrics |
+| `otel` | OpenTelemetry API, SDK, the OTLP HTTP/protobuf exporter, and the system-metrics instrumentation | Recording and exporting metrics and spans, and the process view |
 | `otel-http` | FastAPI and httpx OpenTelemetry instrumentation | Instrumenting inbound and outbound HTTP |
 | `postgres` | Psycopg | PostgreSQL pools and query execution |
 | `rabbitmq` | aio-pika and pika | Async and synchronous broker resilience |
@@ -190,6 +190,44 @@ configured providers; spans appear only once a `TracerProvider` is live.
 Both default `OTEL_SEMCONV_STABILITY_OPT_IN` to `http` before the first instrumentation
 initializes. The contrib packages otherwise emit the pre-stable names (`http.server.duration`
 in milliseconds). An operator value wins; a blank value counts as unset.
+
+### Runtime metrics
+
+`setup_telemetry` also installs `opentelemetry-instrumentation-system-metrics` with a
+process-scoped configuration, so every service reports its own CPU, memory, threads, file
+descriptors, and garbage collection without writing a line. No `system.*` host metric is
+collected: a host is scraped once by node-exporter, and a service reporting host numbers would
+multiply them by however many containers share the machine.
+
+These are the instrument names the pinned instrumentor version emits, and the Prometheus names
+the collector's remote-write translation produces from them. The deployment metric catalog
+copies this list, so change it here first.
+
+| Instrument | Kind, unit | Attributes | Prometheus name |
+| --- | --- | --- | --- |
+| `process.cpu.time` | observable counter, seconds | `type` (`user`, `system`) | `process_cpu_time_seconds_total` |
+| `process.cpu.utilization` | observable gauge, ratio | none | `process_cpu_utilization_ratio` |
+| `process.memory.usage` | observable up-down counter, bytes | none | `process_memory_usage_bytes` |
+| `process.memory.virtual` | observable up-down counter, bytes | none | `process_memory_virtual_bytes` |
+| `process.thread.count` | observable up-down counter | none | `process_thread_count` |
+| `process.open_file_descriptor.count` | observable up-down counter | none | `process_open_file_descriptor_count` |
+| `process.context_switches` | observable counter | `type` (`involuntary`, `voluntary`) | `process_context_switches_total` |
+| `cpython.gc.collections` | observable counter, collections | `generation`, `cpython.gc.generation` | `cpython_gc_collections_total` |
+| `groovemap.runtime.event_loop.lag` | histogram, seconds | none | `groovemap_runtime_event_loop_lag_seconds` |
+
+Two of them are platform-conditional and simply absent where the interpreter or the operating
+system cannot supply them: `process.open_file_descriptor.count` is not emitted on Windows, and
+the `cpython.gc.*` instruments are not emitted on PyPy. Instruments are registered against the
+configured provider only, so a service with no endpoint pays nothing.
+
+`start_event_loop_monitor(interval_s=1.0)` starts the one runtime signal no library provides.
+It samples how much longer each `interval_s` sleep actually took, which is the time the loop
+could not run a ready callback, and records it into `groovemap.runtime.event_loop.lag` with
+explicit boundaries from one millisecond to five seconds. Call it from the service's running
+loop after `setup_telemetry`. It returns the sampling task, or `None` when there is nothing to
+sample into: before `setup_telemetry`, with metrics export off, without the `otel` extra, or
+outside a running loop. It is idempotent per loop, never raises, and `shutdown_telemetry`
+cancels it.
 
 ### Metrics the wrappers emit for free
 

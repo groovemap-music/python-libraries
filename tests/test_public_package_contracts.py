@@ -59,6 +59,7 @@ RUNTIME_EXPORTS = {
     "resilient_connection",
     "setup_logging",
     "setup_telemetry",
+    "start_event_loop_monitor",
     "shutdown_telemetry",
     "with_async_neo4j_retry",
     "with_neo4j_retry",

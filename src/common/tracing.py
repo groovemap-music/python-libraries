@@ -25,8 +25,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-# The scope every span this library opens is reported under, matching the metric scope.
-INSTRUMENTATION_SCOPE = "groovemap.runtime"
+# The scope every span this library opens is reported under; the same one its metrics use.
+INSTRUMENTATION_SCOPE = telemetry.INSTRUMENTATION_SCOPE
 
 # W3C TraceContext carries exactly these two headers; both are printable ASCII by spec.
 TRACEPARENT_HEADER = "traceparent"
