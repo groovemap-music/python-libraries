@@ -238,10 +238,6 @@ _sdk_provider: SdkMeterProvider | None = None
 _tracer_provider: TracerProvider | None = None
 _sdk_tracer_provider: SdkTracerProvider | None = None
 
-# One event-loop sampler per loop. Keyed weakly so a finished loop's monitor is collectable
-# and a service that runs several loops in sequence gets a fresh one for each.
-_event_loop_monitors: WeakKeyDictionary[AbstractEventLoop, Task[None]] = WeakKeyDictionary()
-
 # Bumped whenever the installed provider changes. Callers that cache instruments compare it
 # so instruments built against an earlier (usually no-op) provider are rebuilt rather than
 # silently dropping every measurement after a late setup_telemetry.
@@ -503,6 +499,56 @@ async def _sample_event_loop_lag(interval_s: float, histogram: Any) -> None:
             logger.debug("Could not record %s", EVENT_LOOP_LAG, exc_info=True)
 
 
+class _EventLoopMonitorRegistry:
+    """Own the event-loop sampler tasks created by telemetry lifecycle calls."""
+
+    def __init__(self) -> None:
+        self.tasks: WeakKeyDictionary[AbstractEventLoop, Task[None]] = WeakKeyDictionary()
+
+    def start(self, interval_s: float) -> Task[None] | None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("⚠️ start_event_loop_monitor was called outside a running event loop — not sampling")
+            return None
+
+        existing = self.tasks.get(loop)
+        if existing is not None and not existing.done():
+            return existing
+
+        try:
+            histogram = get_meter(INSTRUMENTATION_SCOPE).create_histogram(
+                EVENT_LOOP_LAG,
+                unit="s",
+                description="Delay between when the event loop should have run a callback and when it did.",
+                explicit_bucket_boundaries_advisory=list(EVENT_LOOP_LAG_BUCKETS),
+            )
+            monitor = loop.create_task(_sample_event_loop_lag(max(interval_s, 0.0), histogram), name="groovemap-event-loop-monitor")
+        except Exception:
+            logger.warning("⚠️ Could not start the event-loop monitor — running without the lag histogram", exc_info=True)
+            return None
+
+        self.tasks[loop] = monitor
+        return monitor
+
+    def stop_all(self) -> None:
+        monitors = list(self.tasks.items())
+        self.tasks.clear()
+        for loop, monitor in monitors:
+            if monitor.done() or loop.is_closed():
+                continue
+            try:
+                # A monitor may belong to a loop running on another thread.
+                loop.call_soon_threadsafe(monitor.cancel)
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("Could not cancel the event-loop monitor", exc_info=True)
+
+
+_event_loop_monitor_registry = _EventLoopMonitorRegistry()
+# Retained for private test and diagnostic compatibility.
+_event_loop_monitors = _event_loop_monitor_registry.tasks
+
+
 def start_event_loop_monitor(interval_s: float = 1.0) -> Task[None] | None:
     """Sample this loop's scheduling delay into the event-loop lag histogram.
 
@@ -519,50 +565,14 @@ def start_event_loop_monitor(interval_s: float = 1.0) -> Task[None] | None:
         logger.debug("Event-loop monitoring skipped: metrics are not being exported")
         return None
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        logger.warning("⚠️ start_event_loop_monitor was called outside a running event loop — not sampling")
-        return None
-
     with _lock:
-        existing = _event_loop_monitors.get(loop)
-        if existing is not None and not existing.done():
-            return existing
-
-        try:
-            histogram = get_meter(INSTRUMENTATION_SCOPE).create_histogram(
-                EVENT_LOOP_LAG,
-                unit="s",
-                description="Delay between when the event loop should have run a callback and when it did.",
-                explicit_bucket_boundaries_advisory=list(EVENT_LOOP_LAG_BUCKETS),
-            )
-            monitor = loop.create_task(_sample_event_loop_lag(max(interval_s, 0.0), histogram), name="groovemap-event-loop-monitor")
-        except Exception:
-            logger.warning("⚠️ Could not start the event-loop monitor — running without the lag histogram", exc_info=True)
-            return None
-
-        _event_loop_monitors[loop] = monitor
-        return monitor
+        return _event_loop_monitor_registry.start(interval_s)
 
 
 def _stop_event_loop_monitors() -> None:
     """Cancel every running event-loop sampler. Never raises."""
     with _lock:
-        monitors = list(_event_loop_monitors.items())
-        _event_loop_monitors.clear()
-
-    for loop, monitor in monitors:
-        if monitor.done():
-            continue
-        try:
-            if loop.is_closed():
-                continue
-            # The caller may be shutting down from another thread, and cancelling a task is
-            # only safe from the loop that owns it.
-            loop.call_soon_threadsafe(monitor.cancel)
-        except Exception:  # pragma: no cover - defensive
-            logger.debug("Could not cancel the event-loop monitor", exc_info=True)
+        _event_loop_monitor_registry.stop_all()
 
 
 def tracer_provider() -> TracerProvider:

@@ -270,20 +270,24 @@ class ResilientConnection[T]:
         except Exception as e:
             logger.warning(f"⚠️ {self.name}: Error closing connection: {e}")
 
+    def _create_tested_connection(self) -> T:
+        """Create a healthy connection, closing a rejected candidate."""
+        connection = self.connection_factory()
+        if self.connection_test(connection):
+            return connection
+        self._close_connection(connection)
+        raise ConnectionEstablishmentError("Connection test failed")
+
     def get_connection(self) -> T:
         """Get a healthy connection, creating or reconnecting if needed."""
         with self._lock:
             if self._connection and self._test_connection(self._connection):
                 return self._connection
 
-            # The existing connection is unhealthy. Close and discard it BEFORE reconnecting —
-            # otherwise the retry loop overwrites self._connection and orphans the old object
-            # (leaked driver pool / socket that GC cannot reliably clean up).
             if self._connection is not None:
                 self._close_connection(self._connection)
                 self._connection = None
 
-            # Connection is not healthy, try to create new one
             retry_count = 0
             last_error = None
 
@@ -291,15 +295,7 @@ class ResilientConnection[T]:
                 try:
                     logger.info(f"🔄 {self.name}: Creating new connection (attempt {retry_count + 1}/{self.max_retries})")
 
-                    def create_connection() -> T:
-                        conn = self.connection_factory()
-                        if not self.connection_test(conn):
-                            # Close the just-built connection before discarding it.
-                            self._close_connection(conn)
-                            raise ConnectionEstablishmentError("Connection test failed")
-                        return conn
-
-                    self._connection = self.circuit_breaker.call(create_connection)
+                    self._connection = self.circuit_breaker.call(self._create_tested_connection)
                     runtime_metrics.record_reconnect(self.system)
                     logger.info(f"✅ {self.name}: Connection established successfully")
                     return self._connection
@@ -362,29 +358,18 @@ class AsyncResilientConnection[T]:
         self.backoff = backoff or ExponentialBackoff()
         self.max_retries = max_retries
         self.name = name
-        # Closed-set metric attribute for this wrapper's backing system; falls back to the
-        # display name so an unlabelled subclass still reports something stable.
         self.system = system or name.lower()
-        # Seconds a successful health probe is trusted before re-probing.
         self.health_check_ttl = health_check_ttl
-        # Consecutive failed probes required before a live connection is replaced.
         self.unhealthy_threshold = unhealthy_threshold
-        # Seconds a replaced connection is left open so in-flight borrowers can drain.
         self.close_grace_period = close_grace_period
-        # Seconds after a fully failed reconnect cycle during which callers fail
-        # fast instead of each repeating the cycle.
         self.reconnect_cooldown = reconnect_cooldown
         self._connection: T | None = None
         self._lock: asyncio.Lock | None = None
         self._last_healthy_at: float = 0.0
         self._failed_probes: int = 0
-        # The single in-flight reconnect cycle, shared by all waiters, plus the
-        # memo of the last failed one.
         self._reconnect_task: asyncio.Task[T] | None = None
         self._last_failure_at: float | None = None
         self._last_failure_error: Exception | None = None
-        # Connections detached from the manager but not yet closed, and the
-        # tasks that will close them.
         self._draining: list[Any] = []
         self._close_tasks: set[asyncio.Task[None]] = set()
 
@@ -467,6 +452,16 @@ class AsyncResilientConnection[T]:
         self._close_tasks.add(task)
         task.add_done_callback(self._close_tasks.discard)
 
+    def _detach_connection(self, connection: T) -> None:
+        """Stop handing out an unhealthy connection while existing borrowers drain."""
+        self._connection = None
+        self._failed_probes = 0
+        self._last_healthy_at = 0.0
+        self._schedule_deferred_close(connection)
+
+    def _reconnect_failure_is_fresh(self) -> bool:
+        return self._last_failure_at is not None and time.monotonic() - self._last_failure_at < self.reconnect_cooldown
+
     async def _close_after_grace(self, connection: Any) -> None:
         """Wait out the grace period, then close a detached connection."""
         if self.close_grace_period > 0:
@@ -515,34 +510,20 @@ class AsyncResilientConnection[T]:
                 if await self._connection_is_usable(connection):
                     return connection
 
-                # Declared dead. Detach it BEFORE reconnecting — otherwise the retry loop
-                # overwrites self._connection and orphans the old object (e.g. a whole Neo4j
-                # driver pool of 50 sockets that GC cannot close via __del__) — but close it
-                # on a grace timer rather than out from under live sessions.
-                self._connection = None
-                self._failed_probes = 0
-                self._last_healthy_at = 0.0
-                self._schedule_deferred_close(connection)
+                self._detach_connection(connection)
 
-            # Fail fast if another coroutine just burned a full failed cycle:
-            # repeating it would only stack another multi-minute wait onto a
-            # caller that is going to fail anyway.
-            if self._last_failure_at is not None and time.monotonic() - self._last_failure_at < self.reconnect_cooldown:
+            if self._reconnect_failure_is_fresh():
                 raise ConnectionEstablishmentError(
                     f"{self.name}: Connection unavailable — a reconnect cycle failed less than {self.reconnect_cooldown:.0f}s ago"
                 ) from self._last_failure_error
 
             if self._reconnect_task is None or self._reconnect_task.done():
                 self._reconnect_task = asyncio.create_task(self._reconnect())
-                # Mark the failure retrieved even if every waiter is cancelled,
-                # so a failed cycle cannot log "exception was never retrieved".
+                # Consume a failed shared task even when all of its waiters are cancelled.
                 self._reconnect_task.add_done_callback(_consume_task_exception)
             task = self._reconnect_task
 
-        # Awaited WITHOUT the lock so borrowers of a still-healthy connection
-        # (and close()) are never blocked behind a reconnect, and so every
-        # concurrent caller joins the SAME cycle instead of running its own.
-        # Shielded so one cancelled waiter cannot cancel the shared cycle.
+        # A cancelled waiter must not cancel the reconnect shared by other callers.
         return await asyncio.shield(task)
 
     async def _reconnect(self) -> T:
@@ -572,11 +553,8 @@ class AsyncResilientConnection[T]:
 
                 conn = await self.circuit_breaker.call_async(create_connection)
 
-                # Publishing the handle is the only step that needs the lock.
                 async with self._get_lock():
                     self._connection = cast("T", conn)
-                    # create_connection already health-checked it — don't re-probe
-                    # borrowers for another health_check_ttl seconds.
                     self._last_healthy_at = time.monotonic()
                     self._failed_probes = 0
                     self._last_failure_at = None
@@ -625,24 +603,15 @@ class AsyncResilientConnection[T]:
             self._failed_probes = 0
 
 
-# Context managers for resilient connections
 @contextmanager
 def resilient_connection[T](connection_manager: ResilientConnection[T]) -> Any:
     """Context manager for resilient connections."""
     conn = connection_manager.get_connection()
-    try:
-        yield conn
-    finally:
-        # Don't close the connection - it's managed by the connection manager
-        pass
+    yield conn
 
 
 @asynccontextmanager
 async def async_resilient_connection[T](connection_manager: AsyncResilientConnection[T]) -> Any:
     """Async context manager for resilient connections."""
     conn = await connection_manager.get_connection()
-    try:
-        yield conn
-    finally:
-        # Don't close the connection - it's managed by the connection manager
-        pass
+    yield conn
