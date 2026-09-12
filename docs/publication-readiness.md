@@ -12,7 +12,7 @@ flowchart TD
     Check --> History[Reachable object graph and secret scans]
     Check --> Consumers[Ten-consumer no-credential matrix]
     Candidate --> Audit[just audit]
-    Candidate --> DryRun[just release-dry-run]
+    Check --> DryRun[just release-dry-run]
     DryRun --> Artifacts[Wheels, source archives, checksums, SBOM, notices, provenance]
     Contracts --> Attest[dist/publication-readiness.json]
     History --> Attest

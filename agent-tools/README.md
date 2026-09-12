@@ -2,7 +2,7 @@
 
 `groovemap-agent-tools` provides framework-neutral async query orchestration shared by
 `catalog-api` and `mcp-server`. Callers supply resolvers and database handles; this package
-does not own database credentials, connections, HTTP routing, or application policy.
+does not create or own database connections, credentials, HTTP routing, or application policy.
 
 The distribution supports Python 3.14, pinned to Python 3.14.7 in CI. It installs no console
 command and requires the exact same version of `groovemap-runtime`. It is owned and released from the GrooveMap

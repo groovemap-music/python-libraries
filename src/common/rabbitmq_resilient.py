@@ -42,7 +42,6 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
         self.heartbeat = heartbeat
         self.blocked_connection_timeout = blocked_connection_timeout
 
-        # Circuit breaker for RabbitMQ failures
         circuit_breaker = CircuitBreaker(
             CircuitBreakerConfig(
                 name="RabbitMQ",
@@ -53,7 +52,6 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
             )
         )
 
-        # Exponential backoff for retries
         backoff = ExponentialBackoff(initial_delay=1.0, max_delay=60.0, exponential_base=2.0)
 
         super().__init__(
@@ -70,7 +68,6 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
 
     def _create_connection(self) -> BlockingConnection:
         """Create a new RabbitMQ blocking connection."""
-        # Redact password from URL for logging (never log credentials)
         safe_url = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", self.connection_url)
         logger.info(f"🐰 Creating new RabbitMQ connection to {safe_url}")
 
@@ -78,8 +75,7 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
         params.heartbeat = self.heartbeat
         params.blocked_connection_timeout = self.blocked_connection_timeout
 
-        connection = BlockingConnection(params)
-        return connection
+        return BlockingConnection(params)
 
     def _test_connection(self, connection: BlockingConnection) -> bool:
         """Test if the connection is healthy."""
@@ -93,11 +89,9 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
         connection = self.get_connection()
 
         with self._lock:
-            # Check if we have a valid channel
             if self._channel and self._channel.is_open:
                 return self._channel
 
-            # Create new channel
             logger.info("🐰 Creating new RabbitMQ channel")
             self._channel = connection.channel()
             return self._channel
@@ -241,22 +235,18 @@ class AsyncResilientRabbitMQ:
         self._channel: aio_pika.abc.AbstractChannel | None = None
         self._lock: asyncio.Lock | None = None
 
-        # Circuit breaker for RabbitMQ failures
-        # Use higher threshold and longer recovery for startup scenarios
         self.circuit_breaker = CircuitBreaker(
             CircuitBreakerConfig(
                 name="AsyncRabbitMQ",
                 system="rabbitmq",
-                failure_threshold=5,  # Allow more attempts before opening
-                recovery_timeout=60,  # Give more time for RabbitMQ to start
+                failure_threshold=5,
+                recovery_timeout=60,
                 expected_exception=(AMQPConnectionError, AMQPChannelError, ConnectionClosed),
             )
         )
 
-        # Exponential backoff for retries
         self.backoff = ExponentialBackoff(initial_delay=1.0, max_delay=60.0, exponential_base=2.0)
 
-        # Reconnect callbacks
         self._reconnect_callbacks: list[Callable] = []
 
     async def connect(self) -> aio_pika.abc.AbstractRobustConnection:
@@ -268,36 +258,22 @@ class AsyncResilientRabbitMQ:
         last_error = None
 
         while retry_count < self.max_retries:
-            # Check-and-set connecting flag under the lock, but do I/O outside
-            should_connect = False
             async with self._lock:
-                # Double-check under lock (another task may have connected)
                 if self._connection and not self._connection.is_closed:
                     return self._connection
-                should_connect = True
-
-            if not should_connect:
-                continue  # pragma: no cover
 
             try:
                 logger.info(f"🐰 Creating robust RabbitMQ connection (attempt {retry_count + 1}/{self.max_retries})")
 
                 async def create_connection() -> Any:
-                    # Tuning params ride in the URL query string — see _with_amqp_params.
                     connection = await connect_robust(self._connect_url)
-
-                    # Add reconnect callback
                     connection.reconnect_callbacks.add(self._on_reconnect)
-
                     return connection
 
                 new_connection = await self.circuit_breaker.call_async(create_connection)
 
-                # Store the connection under the lock
                 async with self._lock:
-                    # Another task may have connected while we were doing I/O
                     if self._connection and not self._connection.is_closed:
-                        # Close our redundant connection
                         with contextlib.suppress(Exception):
                             await new_connection.close()
                         return self._connection
@@ -316,7 +292,6 @@ class AsyncResilientRabbitMQ:
                 if retry_count >= self.max_retries:
                     logger.error("❌ All RabbitMQ connection attempts failed")
 
-            # Sleep outside the lock to allow other tasks to proceed
             if retry_count < self.max_retries:
                 delay = self.backoff.get_delay(retry_count - 1)
                 logger.warning(f"⚠️ RabbitMQ connection attempt {retry_count} failed: {last_error}. Retrying in {delay:.1f} seconds...")
@@ -367,10 +342,8 @@ class AsyncResilientRabbitMQ:
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:
-            # Reset channel so it will be recreated
             self._channel = None
 
-        # Outside the lock: callbacks commonly call channel(), which acquires it.
         await self._notify_reconnect_callbacks("reconnect")
 
     def add_reconnect_callback(self, callback: Callable) -> None:
@@ -453,7 +426,6 @@ def _destination_name(message: Any) -> str:
     return "unknown"
 
 
-# Helper function for message processing with retry
 async def process_message_with_retry(
     message: aio_pika.abc.AbstractIncomingMessage,
     handler: Callable,
