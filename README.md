@@ -37,9 +37,22 @@ just setup
 just check
 ```
 
-The stable local interface is `just setup`, `just check`, `just test`, and `just build`.
-`just test-integration` additionally requires a live RabbitMQ service. `just audit` uses
-network vulnerability data and is intentionally separate from the pre-merge gate.
+The supported recipe surface is grouped by purpose below. `just coverage` is the CI-facing alias
+for the same test-and-coverage capability as `just test`; it does not maintain a second command
+body.
+
+| Purpose | Recipes |
+| --- | --- |
+| Discover and provision | `just` / `just default` lists recipes; `just setup` installs the locked workspace and all supported extras |
+| Repair and local feedback | `just format` applies formatting and safe lint fixes; `just test-integration` exercises the live RabbitMQ integration path |
+| Complete pre-merge gate | `just check` composes `format-check`, `lint`, `typecheck`, `test`, `automation-check`, `consumer-matrix-check`, `publication-readiness-check`, `media-taxonomy-check`, `build`, `distribution-check`, `install-check`, `license-check`, `secret-scan`, and `bump-preview` |
+| CI capability aliases | `just coverage` delegates to `test`; the other individual check dependencies are supported for focused CI or developer diagnosis |
+| Network and release rehearsal | `just audit` queries vulnerability data; `just release-dry-run` adds checksums, an SBOM, notices, and provenance after `check`; `just publication-readiness` adds `audit` and the final attestation |
+| Approved version maintenance | `just bump` updates local version metadata, changelog, and lock data only |
+
+Network access and publishing stay outside `just check`. `audit` needs current vulnerability
+data, while `bump`, `release-dry-run`, and `publication-readiness` remain local-only; none publishes,
+tags, pushes, or changes repository visibility.
 
 Both distributions' wheels and source archives are written directly to `dist/`. To prove that
 the wheels work independently, run `just install-check`, which creates isolated temporary

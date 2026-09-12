@@ -28,8 +28,8 @@ typecheck:
 test:
     uv run pytest -m "not integration" --cov=common --cov-report=term-missing --cov-report=xml
 
-coverage:
-    uv run pytest -m "not integration" --cov=common --cov-report=term-missing --cov-report=xml
+# CI calls this capability name; keep one canonical unit-test and coverage command body.
+coverage: test
 
 test-integration:
     uv run pytest -m integration

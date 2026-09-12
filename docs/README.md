@@ -1,7 +1,7 @@
 # Python libraries documentation
 
 - [Repository and package overview](../README.md)
-- [Runtime API, configuration, logging, and metrics](runtime.md)
+- [Runtime API, configuration, telemetry, and resilient-resource ownership](runtime.md)
 - [Agent-tools public API](agent-tools.md)
 - [Compatibility and release policy](compatibility-and-releases.md)
 - [Consumer compatibility and credential-removal gate](consumer-compatibility.md)

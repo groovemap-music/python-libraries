@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-uv build --all-packages --out-dir dist --clear
-uv run python scripts/check-distributions.py
+# The Justfile's release-dry-run dependency runs the complete check graph first, including the
+# canonical build and distribution validation recipes. This script owns only release evidence.
 (
   cd dist
   shasum -a 256 ./*.whl ./*.tar.gz > SHA256SUMS
