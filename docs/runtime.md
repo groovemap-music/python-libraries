@@ -85,11 +85,12 @@ server during import and does not create application-specific metrics.
 
 `setup_telemetry(service_name, *, service_version=None)` installs one process-wide
 `MeterProvider` and one process-wide `TracerProvider`, both built from the same resource, and
-returns the meter provider. `shutdown_telemetry(timeout_s=5.0)` force-flushes and shuts both
-down. `get_meter(name, version=None)` returns a meter for registering instruments and
+returns the meter provider. The telemetry lifecycle owns those providers and its per-event-loop
+monitor tasks; `shutdown_telemetry(timeout_s=5.0)` cancels the monitors, then force-flushes and
+shuts both providers down. `get_meter(name, version=None)` returns a meter for registering instruments and
 `get_tracer(name, version=None)` returns a tracer for opening spans. The library configures
-transport, resource, sampler, and propagator only; every metric and every domain span is
-registered by its consumer.
+transport, resource, sampler, and propagator. Runtime and resilience instruments documented
+below are library-owned; application-domain metrics and spans remain consumer-owned.
 
 Both signals are pushed over OTLP HTTP/protobuf. The runtime never exposes a Prometheus scrape
 endpoint for OpenTelemetry metrics, and reads only standard OpenTelemetry environment
@@ -283,6 +284,35 @@ was more than one.
 of the messages in the batch — `span.get_span_context()` from each delivery, or ready-made
 `Link` objects — and at most 64 are attached, because a batch of ten thousand rows would
 otherwise carry ten thousand links into the collector.
+
+## Resilient connection ownership
+
+`ResilientConnection` and `AsyncResilientConnection` own every connection their factory creates.
+Callers borrow the current connection; they do not close it, and the `resilient_connection` and
+`async_resilient_connection` context managers deliberately leave it open when the borrowing
+scope exits. The manager's `close()` method is the lifecycle boundary that closes the active
+connection. A candidate that fails its first health check is also closed before the retry.
+
+The asynchronous manager additionally protects in-flight borrowers during replacement. It trusts
+a successful probe for `health_check_ttl`, requires `unhealthy_threshold` consecutive failed
+probes, detaches the unhealthy handle immediately, and waits `close_grace_period` before closing
+it. Concurrent callers share one reconnect task; after that task exhausts its retries,
+`reconnect_cooldown` makes new callers fail fast instead of starting identical retry storms.
+Explicit `close()` cancels a reconnect in progress and immediately closes both the active and any
+grace-period connections.
+
+```mermaid
+flowchart LR
+    Borrower[Caller borrows handle] --> Probe{Health accepted?}
+    Probe -- yes --> Active[Manager-owned active connection]
+    Probe -- threshold reached --> Detached[Detach unhealthy connection]
+    Detached --> Shared[One shared reconnect task]
+    Shared --> Active
+    Detached --> Grace[Grace period for in-flight borrowers]
+    Grace --> Closed[Manager closes old connection]
+    Active -->|explicit manager close| Closed
+    Grace -->|explicit manager close skips delay| Closed
+```
 
 ## Media taxonomy boundary
 
