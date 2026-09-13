@@ -1,5 +1,9 @@
 # Publication readiness
 
+**Public-library cutover: complete.** The repository is public, consumers use credential-free
+immutable sources, and the former private-library credentials have been removed through the
+separately approved infrastructure change.
+
 The repository can produce a deterministic, commit-bound readiness attestation without publishing
 anything. The attestation combines the reviewed package contracts, immutable shared automation,
 release artifacts, ten-consumer no-credential matrix, licenses, security checks, active GrooveMap
@@ -19,8 +23,8 @@ flowchart TD
     Consumers --> Attest
     Audit --> Attest
     Artifacts --> Attest
-    Attest --> Gate{Separate operator approval}
-    Gate --> Visibility[Public visibility and main protection]
+    Attest --> Cutover[Public-library cutover complete]
+    Attest --> Gate{Separate release approval}
     Gate --> Release[Version, tag, trusted publisher, and package publication]
 ```
 
@@ -41,18 +45,15 @@ rejects raw planning paths, secret directories, environment files, and private-k
 The sanitized source-repository name in `docs/extraction.md` is provenance, not active branding or
 private planning material.
 
-## External approval gates
+## Current approval boundary
 
-Local readiness does not authorize any remote mutation. The attestation leaves each of these gates
-explicitly unapproved:
+Local readiness does not authorize any remote mutation. Public visibility, anonymous-fetch
+verification, and removal of the temporary private-library credentials are completed historical
+steps. The consumer matrix retains their pre-cutover evidence and does not claim to be live
+infrastructure state.
 
-1. Change repository visibility to public and protect `main` through the separately reviewed
-   infrastructure change.
-2. From an unauthenticated environment, fetch the attested commit over public HTTPS.
-3. Revalidate the consumer matrix, review an exact OpenTofu plan, and separately approve removal
-   of the temporary private-library Actions and Dependabot credentials.
-4. Separately approve the version bump, annotated tag, trusted publisher, and package registry
-   publication.
+The remaining external gate is separate approval of the version bump, annotated tag, trusted
+publisher, and package registry publication.
 
 The readiness command never commits, tags, pushes, publishes, changes visibility, or removes a
 credential. Generated evidence remains ignored under `dist/`.
