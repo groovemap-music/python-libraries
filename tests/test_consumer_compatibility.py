@@ -24,8 +24,8 @@ def test_consumer_matrix_records_exact_package_revision() -> None:
     assert MATRIX["verification"]["result"] == "passed"
 
 
-def test_credential_removal_requires_publication_and_approval() -> None:
-    """Compatibility evidence cannot itself authorize an external mutation."""
+def test_historical_credential_removal_evidence_records_original_gate() -> None:
+    """The immutable pre-cutover evidence retains its original approval boundary."""
     removal = MATRIX["credential_removal"]
     assert removal["performed"] is False
     assert removal["ready_after_publication"] is True
@@ -39,9 +39,36 @@ def test_credential_removal_requires_publication_and_approval() -> None:
 
 
 def test_documentation_names_the_reproducible_and_remote_gates() -> None:
-    """Operators receive both the local proof and the post-publication boundary."""
+    """Operators receive both the historical proof and the current public status."""
     documentation = (ROOT / "docs/consumer-compatibility.md").read_text()
-    assert "verify-consumer-compatibility.py" in documentation
-    assert "anonymous HTTPS fetch" in documentation
-    assert "separately reviewed OpenTofu plan" in documentation
+    normalized = " ".join(documentation.split())
+    assert "verify-consumer-compatibility.py" in normalized
+    assert "anonymous HTTPS fetch" in normalized
+    assert "separately reviewed OpenTofu plan" in normalized
+    assert "**Public-library cutover: complete.**" in normalized
+    assert "immutable pre-cutover evidence snapshot" in normalized
     assert "```mermaid" in documentation
+
+
+def test_active_guidance_keeps_private_access_dormant() -> None:
+    """Public consumption must not regress into required private-package credentials."""
+    authentication = (ROOT / "private-package-auth.md").read_text()
+    documentation_index = (ROOT / "docs/README.md").read_text()
+    workflows = "\n".join(path.read_text() for path in (ROOT / ".github/workflows").glob("*.yml"))
+    normalized_authentication = " ".join(authentication.split())
+
+    assert "**Public-library cutover: complete.**" in authentication
+    assert "No private-package credential is required" in normalized_authentication
+    assert "## Dormant automation compatibility" in authentication
+    assert "They default off or empty" in normalized_authentication
+    assert "requires-private-library" in authentication
+    assert "Completed public-library cutover" in documentation_index
+    assert "requires-private-library" not in workflows
+    for stale_instruction in (
+        "gh auth setup-git",
+        "Do not remove the temporary credentials until",
+        "repository's current private visibility",
+    ):
+        assert stale_instruction not in authentication
+        assert stale_instruction not in documentation_index
+        assert stale_instruction not in (ROOT / "docs/consumer-compatibility.md").read_text()

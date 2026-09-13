@@ -1,8 +1,10 @@
 # Consumer compatibility and credential-removal gate
 
-The machine-readable [consumer matrix](consumer-compatibility.json) records the exact
-`python-libraries` revision and exact revisions of the ten repositories that currently need
-temporary private-library credentials. Each consumer's complete `just check` gate is rehearsed
+**Public-library cutover: complete.** Current consumers resolve `python-libraries` over
+credential-free public HTTPS at immutable revisions. The machine-readable
+[consumer matrix](consumer-compatibility.json) is retained as pre-cutover evidence: it records the
+exact library revision and exact revisions of the ten repositories that previously used
+temporary private-library credentials. Each consumer's complete `just check` gate was rehearsed
 with the credential variables removed and with both distributions resolved from the recorded
 library commit.
 
@@ -17,8 +19,8 @@ release-preview step reports that it found no commits; an uncommitted overlay al
 tree dirty, which is not a state any consumer gate is written for. Committing the overlay gives
 the release preview exactly one new commit to classify and gives the gate a clean tree. The
 committed content is byte-identical to the overlay, and no consumer check is relaxed or skipped. This separates package compatibility from
-the repository's current private visibility and makes the result reproducible before publication.
-The repository-local distribution gate also installs both built wheels in clean environments
+the repository's then-private visibility and preserves the pre-publication result reproducibly.
+The repository-local distribution gate still installs both built wheels in clean environments
 without any GitHub credential.
 
 ```mermaid
@@ -28,11 +30,10 @@ flowchart LR
     Clone --> Anonymous[Remove GitHub and App credentials]
     Anonymous --> CI[Run complete just check]
     CI --> Matrix[Record ten-consumer matrix]
-    Matrix --> Public{Repository public?}
-    Public -- no --> Keep[Keep temporary credentials]
-    Public -- yes --> Fetch[Verify anonymous HTTPS fetch]
-    Fetch --> Plan[Review exact OpenTofu cleanup plan]
-    Plan --> Remove[Remove Actions and Dependabot App credentials]
+    Matrix --> Public[Repository made public]
+    Public --> Fetch[Anonymous HTTPS fetch verified]
+    Fetch --> Plan[Exact OpenTofu cleanup plan reviewed]
+    Plan --> Remove[Actions and Dependabot App credentials removed]
 ```
 
 ## Reproduce the evidence
@@ -54,16 +55,17 @@ interactive Git prompting. It never writes to the source consumer checkout.
 Run `just consumer-matrix-check` for the portable repository-local matrix and package-tree checks.
 That command does not require sibling repositories and is part of `just check`.
 
-## Infra handoff
+## Completed infra handoff
 
-Credential removal is deliberately not performed by this repository. After `python-libraries`
-becomes public, infra must first prove an anonymous HTTPS fetch resolves the library revision in
-the matrix. It may then produce a separately reviewed OpenTofu plan that removes, for exactly the
-matrix's consumer set:
+Credential removal was deliberately not performed by this repository. After
+`python-libraries` became public, infra proved an anonymous HTTPS fetch resolved the library
+revision in the matrix and applied a separately reviewed OpenTofu plan that removed, for exactly
+the matrix's consumer set:
 
 - `github_actions_variable.ci_app_client_id`;
 - `github_actions_secret.ci_app_private_key`;
 - `github_dependabot_secret.ci_app_private_key`.
 
-The matrix keeps `credential_removal.performed` false. A visibility change or credential deletion
-requires its own operator-approved plan; this compatibility evidence grants neither.
+The matrix deliberately keeps `credential_removal.performed` false because it is an immutable
+pre-cutover evidence snapshot, not a live infrastructure-status document. The public cutover and
+credential cleanup completed outside this repository through their own operator-approved plans.
