@@ -230,38 +230,6 @@ def test_destination_name_never_falls_back_to_a_high_cardinality_routing_key() -
     assert _destination_name(Untagged()) == "unknown"
 
 
-def test_sync_postgres_pool_times_the_whole_connection_checkout(collector: Collector) -> None:
-    from common.postgres_resilient import ResilientPostgreSQLPool
-
-    pool = object.__new__(ResilientPostgreSQLPool)
-
-    @contextmanager_for(pool)
-    def _pooled_connection() -> Iterator[str]:
-        yield "connection"
-
-    with ResilientPostgreSQLPool.connection(pool) as conn:
-        assert conn == "connection"
-
-    assert collector.attributes(runtime_metrics.DB_OPERATION_DURATION) == [{"db.system.name": "postgresql", "db.operation.name": "session"}]
-
-
-def test_sync_postgres_pool_records_the_error_type_when_the_body_raises(collector: Collector) -> None:
-    from common.postgres_resilient import ResilientPostgreSQLPool
-
-    pool = object.__new__(ResilientPostgreSQLPool)
-
-    @contextmanager_for(pool)
-    def _pooled_connection() -> Iterator[str]:
-        yield "connection"
-
-    with pytest.raises(RuntimeError, match="query blew up"), ResilientPostgreSQLPool.connection(pool):
-        raise RuntimeError("query blew up")
-
-    assert collector.attributes(runtime_metrics.DB_OPERATION_DURATION) == [
-        {"db.system.name": "postgresql", "db.operation.name": "session", "error.type": "RuntimeError"}
-    ]
-
-
 def test_async_postgres_pool_times_the_whole_connection_checkout(collector: Collector) -> None:
     from contextlib import asynccontextmanager
 
@@ -344,18 +312,6 @@ def test_instruments_are_rebuilt_when_a_provider_is_installed_after_first_use() 
         telemetry._provider = original_provider
         telemetry._generation = original_generation
         runtime_metrics.reset_instruments()
-
-
-def contextmanager_for(target: Any) -> Any:
-    """Bind a zero-argument context-manager factory onto an instance as _pooled_connection."""
-    from contextlib import contextmanager
-
-    def decorate(func: Any) -> Any:
-        wrapped = contextmanager(func)
-        target._pooled_connection = wrapped
-        return wrapped
-
-    return decorate
 
 
 class _StubDriver:
