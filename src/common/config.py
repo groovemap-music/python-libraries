@@ -17,6 +17,7 @@ import orjson
 import structlog
 
 from common import query_debug
+from common.log_rotation import build_rotating_file_handler
 
 
 logger = structlog.get_logger(__name__)
@@ -273,7 +274,13 @@ def setup_logging(
         service_name: Name of the service for logging context
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
                If None, reads from LOG_LEVEL environment variable, defaults to INFO.
-        log_file: Optional file path for logging output
+        log_file: Optional file path for logging output. File output rotates at
+                  ``LOG_FILE_MAX_BYTES`` (100 MiB by default), retaining
+                  ``LOG_FILE_BACKUP_COUNT`` backups (5 by default).
+
+    ``ENVIRONMENT`` is emitted as context only; it does not control verbosity.
+    ``LOG_LEVEL`` controls verbosity independently. When ``ENVIRONMENT`` is not
+    set, its context value defaults to ``development``.
     """
 
     # Read from environment variable if level not provided, default to INFO
@@ -346,7 +353,7 @@ def setup_logging(
     # File handler if specified
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
+        file_handler = build_rotating_file_handler(log_file)
         file_handler.setFormatter(
             structlog.stdlib.ProcessorFormatter(
                 foreign_pre_chain=shared_processors,

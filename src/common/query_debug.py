@@ -14,6 +14,7 @@ from time import perf_counter
 from typing import Any
 
 from common import runtime_metrics, tracing
+from common.log_rotation import build_rotating_file_handler
 
 
 _logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ def get_profiling_logger() -> logging.Logger:
             # Ensure log directory exists
             PROFILING_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-            handler = logging.FileHandler(PROFILING_LOG_PATH)
+            handler = build_rotating_file_handler(PROFILING_LOG_PATH)
             handler.setLevel(logging.DEBUG)
             formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
             handler.setFormatter(formatter)

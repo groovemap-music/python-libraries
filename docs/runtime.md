@@ -87,7 +87,20 @@ The stable configuration functions deliberately remain small:
   security options. Verification defaults to enabled whenever TLS is enabled.
 - `setup_logging(service_name, level=None, log_file=None)` configures JSON logs and binds
   `service` plus `ENVIRONMENT` context. `level` takes precedence over `LOG_LEVEL`; an invalid
-  value falls back to `INFO` and emits a warning.
+  value falls back to `INFO` and emits a warning. `ENVIRONMENT` is bound as log context only —
+  it does **not** select verbosity. A deployment that never sets `ENVIRONMENT` logs
+  `"environment":"development"` at whatever level `LOG_LEVEL` resolves to (`INFO` by default);
+  that value is cosmetic and is not evidence of a debug-verbosity logging path. Verbosity is
+  controlled exclusively by `LOG_LEVEL` (or the `level` argument).
+- When `log_file` is given, the file sink is a `RotatingFileHandler` (via
+  `common.log_rotation.build_rotating_file_handler`), not an unbounded `FileHandler`.
+  `LOG_FILE_MAX_BYTES` (default `104857600`, 100 MiB) caps the active file before it rolls
+  over, and `LOG_FILE_BACKUP_COUNT` (default `5`) caps the number of retained backups. Both
+  read from the environment at handler-construction time, so a deployment tunes them without a
+  rebuild; a non-numeric or non-positive override falls back to the default rather than
+  disabling the bound. Every consumer that already passes `log_file=...` to `setup_logging`
+  (or uses `common.query_debug`'s profiling logger) gets the bounded handler automatically on
+  upgrading this package — no consumer-side code change is required.
 
 Consumers own their settings models, required-variable validation, secret acquisition,
 deployment defaults, and process lifecycle. The shared
