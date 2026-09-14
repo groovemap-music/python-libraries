@@ -1,0 +1,116 @@
+{
+  "repository": "groovemap-music/design",
+  "commit": "14aa2d70dded6b0854569cc4909afc5ae4ebe03f",
+  "files": [
+    {
+      "path": "taxonomy/events/v1/fixtures/event-account-erasure-requested.json",
+      "vendored_as": "tests/fixtures/events/event-account-erasure-requested.json",
+      "sha256": "b52376dc7ac19f49b28cac3d4df03798c3d89c578a4708c13101b96fc321d5d5"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-account-export-requested.json",
+      "vendored_as": "tests/fixtures/events/event-account-export-requested.json",
+      "sha256": "c75dcfa05c77cd3a5ebe310c03e065be84ce5289a6f4f4b5e4b8e7970143d450"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-collection-item-added.json",
+      "vendored_as": "tests/fixtures/events/event-collection-item-added.json",
+      "sha256": "49de2c3f45ae09663bb291459613e2802c20fdca406ced951a462dab6f800e82"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-collection-item-removed.json",
+      "vendored_as": "tests/fixtures/events/event-collection-item-removed.json",
+      "sha256": "96c566a70cf830c99effbc22bbb4c36a5df2ecaeaadcaaa7eadb0b36e7724bdf"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-collection-item-updated.json",
+      "vendored_as": "tests/fixtures/events/event-collection-item-updated.json",
+      "sha256": "5a5c75eecbcf73d04c7e452dd5566591b373e0cfeb4a877b479f6b5074d17988"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-consent-granted.json",
+      "vendored_as": "tests/fixtures/events/event-consent-granted.json",
+      "sha256": "ea8298b8a689a7d664884452ffe7c6e548a41959384baf6069282b1fa2f53453"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-consent-revoked.json",
+      "vendored_as": "tests/fixtures/events/event-consent-revoked.json",
+      "sha256": "05462db97face1ad4eafccc4e5a985b8e846df6a72c7361bde6604bf0eb5587e"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-recommendation-dismissed.json",
+      "vendored_as": "tests/fixtures/events/event-recommendation-dismissed.json",
+      "sha256": "2f521d4a01f11b146d1cd0b32ac4db5fba00b6d9afee5f2608e14ca67aa1da6d"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-recommendation-hidden.json",
+      "vendored_as": "tests/fixtures/events/event-recommendation-hidden.json",
+      "sha256": "339a719c6792f3097f01166b12378e556c731675a124168cb9659a5c3e32107d"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-recommendation-opened.json",
+      "vendored_as": "tests/fixtures/events/event-recommendation-opened.json",
+      "sha256": "1e1de60334cbda53251f23ce5a4e55fc286ab2e4da6d47dcf0ffaf16ea96ebf5"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-recommendation-saved.json",
+      "vendored_as": "tests/fixtures/events/event-recommendation-saved.json",
+      "sha256": "6e83fca85e9788181a5700b62f0243a0e9822dd1b6be33d278714f03a41046d0"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-recommendation-shown.json",
+      "vendored_as": "tests/fixtures/events/event-recommendation-shown.json",
+      "sha256": "d87f81a056d1399a35066bc42718e844e6a8fe6299a46471c3e4b4c8bc868745"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-search-query.json",
+      "vendored_as": "tests/fixtures/events/event-search-query.json",
+      "sha256": "8181c87d21befa90c12aca01c4b2a32c8b28ac16b2c8cffd54a1a574c035747f"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-search-result-impression.json",
+      "vendored_as": "tests/fixtures/events/event-search-result-impression.json",
+      "sha256": "f4ae594b6230a67821574e85fc0b1141ff325b70e701da058574a63a754b30af"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-wantlist-item-added.json",
+      "vendored_as": "tests/fixtures/events/event-wantlist-item-added.json",
+      "sha256": "b925f480d7ca6028a6bebd4172d1c0b57554dd47ca3b2bdb3ce9cc2030a25583"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-wantlist-item-removed.json",
+      "vendored_as": "tests/fixtures/events/event-wantlist-item-removed.json",
+      "sha256": "4b0266da8d5599cec6c69865896c9e77f823bd8d435ba0274b033c3087d14a41"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/impression-recommendation-shown.json",
+      "vendored_as": "tests/fixtures/events/impression-recommendation-shown.json",
+      "sha256": "bdfe8e7fd1b4c827cd2821f84b7be49f57c7b4e7144cd5f8eceff5b41cbeab16"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/impression-search-result.json",
+      "vendored_as": "tests/fixtures/events/impression-search-result.json",
+      "sha256": "45200b41e3f59ff611276283fa6e9b3ec8ebf87422401432a85fc8a91dc356db"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/invalid-event-missing-consent-purposes.json",
+      "vendored_as": "tests/fixtures/events/invalid-event-missing-consent-purposes.json",
+      "sha256": "5c6138182f78b1eed347a67c5705ed324daf440f4f64c09d69cc8a76ad27e9e1"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/invalid-event-unknown-type.json",
+      "vendored_as": "tests/fixtures/events/invalid-event-unknown-type.json",
+      "sha256": "8ab704c8689ce860d15879ec3831a892a51f7a98400f5e90903ec98e7fe2fd39"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/invalid-impression-missing-candidate-set-id.json",
+      "vendored_as": "tests/fixtures/events/invalid-impression-missing-candidate-set-id.json",
+      "sha256": "8dd7f05d510d74233537db669a25ad784a9e1ae9c9d06de4d5df1904907755f0"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/invalid-impression-missing-policy-id.json",
+      "vendored_as": "tests/fixtures/events/invalid-impression-missing-policy-id.json",
+      "sha256": "7774c2317725da62990bd61c0174d67651762cf7ad252a6cacfacc66dfd28015"
+    }
+  ]
+}

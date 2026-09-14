@@ -13,9 +13,11 @@ from an implementation module, when a name appears here.
 | --- | --- |
 | Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging` |
 | Data and diagnostics | `normalize_record`, `describe_exception` |
+| First-party events | `Event`, `Impression`, `EventValidationError`, `event_types`, `surfaces`, `consent_purposes`, `payload_schema_for`, `is_valid_event_type`, `validate_event`, `validate_impression`, `new_event`, `new_impression` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
 | Health and outage control | `HealthServer`, `OutageBackoff` |
 | Media taxonomy | `map_discogs_formats`, `map_musicbrainz_release`, `legacy_format_names_to_media`, `flatten_descriptions`, `families_of`, `family_ids`, `medium_ids`, `medium_label` |
+| Native identity | `AliasRef`, `entity_kinds`, `catalog_kinds`, `providers`, `alias_sources`, `is_valid_entity_kind`, `is_valid_provider`, `is_valid_alias_source`, `new_id`, `resolve_aliases`, `attach_aliases` |
 | Neo4j | `AsyncResilientNeo4jDriver`, `ResilientNeo4jDriver`, `with_async_neo4j_retry`, `with_neo4j_retry` |
 | PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL`, `ResilientPostgreSQLPool` |
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
@@ -38,7 +40,7 @@ imports it during migration.
 | `neo4j` | Neo4j driver | Neo4j connection and retry helpers |
 | `otel` | OpenTelemetry API, SDK, the OTLP HTTP/protobuf exporter, and the system-metrics instrumentation | Recording and exporting metrics and spans, and the process view |
 | `otel-http` | FastAPI and httpx OpenTelemetry instrumentation | Instrumenting inbound and outbound HTTP |
-| `postgres` | Psycopg | PostgreSQL pools and query execution |
+| `postgres` | Psycopg | PostgreSQL pools, query execution, and the `common.identity` alias resolve |
 | `rabbitmq` | aio-pika and pika | Async and synchronous broker resilience |
 | `all` | Every optional dependency | Development and full validation only |
 
@@ -359,6 +361,87 @@ always present, holding `null` or an empty list when unknown.
 
 `common.agent_tools.schemas` carries the same shape as `MediaBlock`, `MediaItem`, and
 `MediaSource` typed dictionaries for consumers that want the block statically checked.
+
+## Identity boundary
+
+[ADR 0009 in the `design`
+repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0009-native-identity-and-provider-aliases.md)
+mints a native UUID version 7 for every GrooveMap entity and demotes provider identifiers to
+evidence in a single `provider_aliases` table. Both SQL loaders and `catalog-api` need the same
+lookup-or-create, so `common.identity` is the one implementation, reading the identity
+vocabulary vendored into this distribution as package data.
+
+- `entity_kinds()`, `catalog_kinds()`, `providers()`, and `alias_sources()` return the closed
+  sets as tuples in vocabulary order. `catalog_kinds()` is the subset minted through
+  `catalog_items` — `release`, `master`, `artist`, and `label`. `is_valid_entity_kind(kind)`,
+  `is_valid_provider(provider)`, and `is_valid_alias_source(source)` answer membership.
+- `new_id()` mints a native identifier: a UUID version 7, the same format the database's
+  `uuidv7()` column default produces.
+- `AliasRef(provider, entity_kind, external_id)` is one provider identifier, keyed exactly as
+  the alias table's partial unique index keys it. Construction is the validation point: a value
+  outside a closed set, or an empty `external_id`, raises `ValueError` there, so no malformed
+  ref can reach a statement. `external_id` is a string because the column is `TEXT`.
+- `resolve_aliases(conn, refs, *, source="catalog", confidence=1.0)` resolves a batch to native
+  ids and mints a catalog item for every miss whose kind is a catalog kind. A miss on any other
+  kind is returned absent, because `catalog-api` mints those entities itself.
+- `attach_aliases(conn, mapping, *, source="catalog", confidence=1.0)` attaches provider
+  identifiers to native ids that are already known, which is how a second catalog joins an item
+  the first one minted. The existing alias always wins: when one is already present the returned
+  id is that alias's, not the supplied one, so nothing is overwritten.
+
+Both resolve functions cost three round trips regardless of batch size. They pass the batch as
+array parameters rather than looping, so a hundred-row loader transaction stays one `SELECT`,
+one `INSERT ... ON CONFLICT DO NOTHING` against the partial unique index on
+`(provider, entity_kind, external_id) WHERE valid_to IS NULL`, and one re-`SELECT` for anything
+a concurrent writer won. A catalog item minted for a ref that lost such a race is deleted in the
+same pass, so a race leaves no orphan. Both return only the refs that resolved.
+
+Both run inside the **caller's** transaction, on the **caller's** connection, and open no
+SAVEPOINT: the loaders own their transaction boundaries, and a nested rollback point would
+change their failure semantics.
+
+Only `resolve_aliases` and `attach_aliases` need Psycopg, to hold the connection they act on.
+It is imported here under `TYPE_CHECKING` only, so `import common.identity` succeeds with the
+base install and the vocabulary accessors and `new_id()` work there; install the `postgres`
+extra to have a connection to pass to either of the two resolve functions.
+
+## Event boundary
+
+[ADR 0010 in the `design`
+repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md)
+adds two append-only tables in an `activity` schema and publishes a JSON Schema for each
+envelope. Both schemas and the closed version 1 event-type vocabulary are vendored into this
+distribution as package data, and `common.events` is the shared Python model.
+
+- `event_types()`, `surfaces()`, and `consent_purposes()` return the closed sets as tuples in
+  vocabulary order; `is_valid_event_type(event_type)` answers membership.
+  `payload_schema_for(event_type)` returns a read-only view of that type's payload sub-schema,
+  which still references the vendored document's `$defs`.
+- `Event` and `Impression` are frozen dataclasses carrying every column of their table.
+  `to_row()` returns the row keyed by column name, ready to insert; `from_mapping(document)`
+  validates a decoded wire document and builds the model from it.
+- `validate_event(document)` and `validate_impression(document)` check a document against the
+  published contract and raise `EventValidationError` naming the first field that failed. Values
+  may be JSON scalars, as a decoded document carries them, or the native `UUID` and `datetime`
+  objects `to_row()` produces.
+- `new_event(...)` and `new_impression(...)` mint a validated model, stamping the id, the event
+  type's schema version, and `recorded_at`. `producer`, `consent_purposes`, and
+  `idempotency_key` are explicit, because none of the three has a safe default: the first names
+  which service wrote the row, the second is the consent snapshot the row is interpreted under
+  later, and a generated idempotency key would defeat the retry safety it exists for.
+
+The validation is the standard library only, so no schema library enters this distribution's
+base dependencies and a consumer pinned to an older lockfile keeps resolving. What keeps it
+honest is `tests/test_events.py`, which validates all twenty-two vendored fixtures against the
+vendored JSON Schemas with `jsonschema` — a development dependency — and asserts the standard
+library validator returns the same verdict on every one, including the four fixtures the design
+publishes as invalid. The Python model therefore cannot drift from the published schema without
+a failing test.
+
+`Impression` carries two fields the published envelope does not: `recorded_at` and
+`consent_purposes`. Both are columns of the landed `activity.impressions` table, the second
+`NOT NULL`, so a row cannot be written without them while the wire envelope leaves them to the
+writer. They are optional on the way in and always present in `to_row()`.
 
 ## Compatibility boundary
 

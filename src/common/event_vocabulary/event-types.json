@@ -1,0 +1,251 @@
+{
+  "vocabulary_version": "1",
+  "license": "MIT",
+  "naming_rule": {
+    "form": "<surface>.<past-tense verb>",
+    "regular_past_tense_suffix": "ed",
+    "irregular_past_tense": ["hidden", "shown"],
+    "nouns_of_record": ["query", "result_impression"]
+  },
+  "consent_purposes": ["product_analytics", "model_training"],
+  "surfaces": [
+    { "id": "search", "label": "Search", "description": "Catalog search and its result lists." },
+    { "id": "recommendation", "label": "Recommendation", "description": "Ranked recommendations and the outcomes of showing them." },
+    { "id": "collection", "label": "Collection", "description": "A user's own collection." },
+    { "id": "wantlist", "label": "Wantlist", "description": "A user's wantlist." },
+    { "id": "consent", "label": "Consent", "description": "Per-purpose consent grants and revocations." },
+    { "id": "account", "label": "Account", "description": "Account-level export and erasure requests." }
+  ],
+  "event_types": [
+    {
+      "id": "search.query",
+      "surface": "search",
+      "verb": "query",
+      "schema_version": 1,
+      "description": "A user ran a catalog search.",
+      "payload_schema": "#/$defs/search_query"
+    },
+    {
+      "id": "search.result_impression",
+      "surface": "search",
+      "verb": "result_impression",
+      "schema_version": 1,
+      "description": "One search result was shown at a position in a result list.",
+      "payload_schema": "#/$defs/search_result_impression"
+    },
+    {
+      "id": "recommendation.shown",
+      "surface": "recommendation",
+      "verb": "shown",
+      "schema_version": 1,
+      "description": "A ranked recommendation list was shown to a user.",
+      "payload_schema": "#/$defs/recommendation_shown"
+    },
+    {
+      "id": "recommendation.opened",
+      "surface": "recommendation",
+      "verb": "opened",
+      "schema_version": 1,
+      "description": "A user opened a shown recommendation.",
+      "payload_schema": "#/$defs/impression_outcome"
+    },
+    {
+      "id": "recommendation.saved",
+      "surface": "recommendation",
+      "verb": "saved",
+      "schema_version": 1,
+      "description": "A user saved a shown recommendation.",
+      "payload_schema": "#/$defs/impression_outcome"
+    },
+    {
+      "id": "recommendation.dismissed",
+      "surface": "recommendation",
+      "verb": "dismissed",
+      "schema_version": 1,
+      "description": "A user dismissed a shown recommendation.",
+      "payload_schema": "#/$defs/impression_outcome"
+    },
+    {
+      "id": "recommendation.hidden",
+      "surface": "recommendation",
+      "verb": "hidden",
+      "schema_version": 1,
+      "description": "A user hid a shown recommendation from future lists.",
+      "payload_schema": "#/$defs/impression_outcome"
+    },
+    {
+      "id": "collection.item_added",
+      "surface": "collection",
+      "verb": "item_added",
+      "schema_version": 1,
+      "description": "An item entered a user's collection.",
+      "payload_schema": "#/$defs/collection_item_change"
+    },
+    {
+      "id": "collection.item_removed",
+      "surface": "collection",
+      "verb": "item_removed",
+      "schema_version": 1,
+      "description": "An item left a user's collection.",
+      "payload_schema": "#/$defs/collection_item_change"
+    },
+    {
+      "id": "collection.item_updated",
+      "surface": "collection",
+      "verb": "item_updated",
+      "schema_version": 1,
+      "description": "A user changed what they record about an item they hold.",
+      "payload_schema": "#/$defs/collection_item_updated"
+    },
+    {
+      "id": "wantlist.item_added",
+      "surface": "wantlist",
+      "verb": "item_added",
+      "schema_version": 1,
+      "description": "An item entered a user's wantlist.",
+      "payload_schema": "#/$defs/wantlist_item_change"
+    },
+    {
+      "id": "wantlist.item_removed",
+      "surface": "wantlist",
+      "verb": "item_removed",
+      "schema_version": 1,
+      "description": "An item left a user's wantlist.",
+      "payload_schema": "#/$defs/wantlist_item_change"
+    },
+    {
+      "id": "consent.granted",
+      "surface": "consent",
+      "verb": "granted",
+      "schema_version": 1,
+      "description": "A user granted consent for one purpose.",
+      "payload_schema": "#/$defs/consent_change"
+    },
+    {
+      "id": "consent.revoked",
+      "surface": "consent",
+      "verb": "revoked",
+      "schema_version": 1,
+      "description": "A user revoked consent for one purpose.",
+      "payload_schema": "#/$defs/consent_change"
+    },
+    {
+      "id": "account.export_requested",
+      "surface": "account",
+      "verb": "export_requested",
+      "schema_version": 1,
+      "description": "A user requested an export of everything keyed to their subject.",
+      "payload_schema": "#/$defs/account_export_requested"
+    },
+    {
+      "id": "account.erasure_requested",
+      "surface": "account",
+      "verb": "erasure_requested",
+      "schema_version": 1,
+      "description": "A user requested erasure of everything keyed to their subject.",
+      "payload_schema": "#/$defs/account_erasure_requested"
+    }
+  ],
+  "$defs": {
+    "search_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query", "filters", "result_count", "request_id"],
+      "properties": {
+        "query": { "type": "string" },
+        "filters": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "result_count": { "type": "integer", "minimum": 0 },
+        "request_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "search_result_impression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["impression_id", "item_id", "position", "request_id"],
+      "properties": {
+        "impression_id": { "$ref": "#/$defs/uuid" },
+        "item_id": { "$ref": "#/$defs/uuid" },
+        "position": { "$ref": "#/$defs/position" },
+        "request_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "recommendation_shown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["impression_id", "candidate_set_id", "policy_id", "item_count"],
+      "properties": {
+        "impression_id": { "$ref": "#/$defs/uuid" },
+        "candidate_set_id": { "$ref": "#/$defs/uuid" },
+        "policy_id": { "type": "string", "minLength": 1 },
+        "item_count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "impression_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["impression_id", "item_id"],
+      "properties": {
+        "impression_id": { "$ref": "#/$defs/uuid" },
+        "item_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "collection_item_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "artifact_id", "owned_copy_id"],
+      "properties": {
+        "item_id": { "$ref": "#/$defs/uuid" },
+        "artifact_id": { "$ref": "#/$defs/nullableUuid" },
+        "owned_copy_id": { "$ref": "#/$defs/nullableUuid" }
+      }
+    },
+    "collection_item_updated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "artifact_id", "owned_copy_id", "changed_fields"],
+      "properties": {
+        "item_id": { "$ref": "#/$defs/uuid" },
+        "artifact_id": { "$ref": "#/$defs/nullableUuid" },
+        "owned_copy_id": { "$ref": "#/$defs/nullableUuid" },
+        "changed_fields": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" } }
+      }
+    },
+    "wantlist_item_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id"],
+      "properties": {
+        "item_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "consent_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose"],
+      "properties": {
+        "purpose": { "$ref": "#/$defs/consentPurpose" }
+      }
+    },
+    "account_export_requested": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["export_id", "format"],
+      "properties": {
+        "export_id": { "$ref": "#/$defs/uuid" },
+        "format": { "const": "jsonl" }
+      }
+    },
+    "account_erasure_requested": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["erasure_id"],
+      "properties": {
+        "erasure_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "consentPurpose": { "enum": ["product_analytics", "model_training"] },
+    "nullableUuid": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+    "position": { "type": "integer", "minimum": 1 },
+    "uuid": { "type": "string", "format": "uuid" }
+  }
+}

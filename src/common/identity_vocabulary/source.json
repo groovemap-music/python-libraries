@@ -1,0 +1,11 @@
+{
+  "repository": "groovemap-music/design",
+  "commit": "14aa2d70dded6b0854569cc4909afc5ae4ebe03f",
+  "files": [
+    {
+      "path": "taxonomy/identity/v1/identity-vocabulary.json",
+      "vendored_as": "src/common/identity_vocabulary/identity-vocabulary.json",
+      "sha256": "001db32e91c851d49d252c945c1862e47763462acd44fc6ca84df13bae12e3de"
+    }
+  ]
+}
