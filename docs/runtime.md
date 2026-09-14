@@ -53,9 +53,9 @@ purge or maintenance policy. Transient failures retain original order without se
 deterministic failures shrink toward `min_batch_size` and reject only at the poison threshold;
 bounded drain failure retains work for `run_periodic`.
 
-Consumers must pin an immutable commit revision containing these contracts rather than a moving
-branch. The revision is recorded by the release/merge commit and should be copied into each owner
-hive's dependency lock during its migration.
+Consumers must pin immutable revision `9070407a3f89f022fa1d5d553f6b00f8236bedec`, which contains
+both contracts, rather than a moving branch. Each owner hive should copy that revision into its
+dependency lock during migration.
 
 ## Optional capabilities
 
