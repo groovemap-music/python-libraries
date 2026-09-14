@@ -1,5 +1,6 @@
 """Regression tests for independently installable shared Python packages."""
 
+import ast
 import tomllib
 from importlib import import_module
 from pathlib import Path
@@ -7,6 +8,17 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_delivery_and_batch_modules_have_no_service_dependencies() -> None:
+    """The shared protocol layer remains usable from a base runtime install."""
+    banned_roots = {"aio_pika", "neo4j", "pika", "psycopg"}
+    for relative_path in ("src/common/delivery.py", "src/common/batch.py"):
+        tree = ast.parse((REPO_ROOT / relative_path).read_text())
+        imported = {
+            alias.name.split(".", maxsplit=1)[0] for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names
+        }
+        assert imported.isdisjoint(banned_roots)
 
 
 def _toml(relative_path: str) -> dict[str, Any]:

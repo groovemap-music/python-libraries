@@ -5,9 +5,10 @@ import contextlib
 import inspect
 import logging
 import re
+import warnings
 from copy import copy
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import aio_pika
@@ -18,6 +19,7 @@ from pika.exceptions import AMQPChannelError as PikaChannelError
 from pika.exceptions import AMQPConnectionError as PikaConnectionError
 
 from common import runtime_metrics, tracing
+from common.delivery import DeliveryObserver, DeliveryResult, FailureKind, Settlement, run_delivery
 
 from .db_resilience import (
     CircuitBreaker,
@@ -28,7 +30,7 @@ from .db_resilience import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 
 logger = logging.getLogger(__name__)
@@ -433,67 +435,61 @@ async def process_message_with_retry(
     backoff: ExponentialBackoff | None = None,
     requeue_on_error: bool = True,
 ) -> None:
-    """Process a message with retry logic and proper acknowledgment.
+    """Deprecated compatibility wrapper that performs one handler attempt.
 
-    Opens one CONSUMER span for the whole logical operation, as a child of the context the
-    publisher wrote into the message headers. Retries do not nest spans: a retried message is
-    still one delivery, and the attempts are reported as an integer attribute instead.
+    ``max_retries`` is retained for source compatibility only. Broker redelivery, not an
+    in-process loop, is now the retry authority.
     """
+    warnings.warn(
+        "process_message_with_retry is deprecated; use common.run_delivery",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if backoff is None:
         backoff = ExponentialBackoff(initial_delay=1.0, max_delay=30.0)
-
-    retry_count = 0
-    handler_succeeded = False
     destination = _destination_name(message)
-    started = perf_counter()
-    last_error_type: str | None = None
+    caught: Exception | None = None
 
-    with tracing.consume_span(destination, getattr(message, "headers", None)) as span:
-        while retry_count < max_retries:
-            try:
-                # Process the message
-                if inspect.iscoroutinefunction(handler):
-                    await handler(message)
-                else:
-                    handler(message)
+    class _Observer(DeliveryObserver):
+        def consume(self, observed_destination: str, headers: object | None) -> contextlib.AbstractContextManager[Any]:
+            return tracing.consume_span(observed_destination, cast("Mapping[str, Any] | None", headers))
 
-                handler_succeeded = True
-                break
+        def settled(self, *, entity: str, result: DeliveryResult, duration_s: float, span: Any) -> None:
+            del entity
+            tracing.set_retry_count(span, 1 if result.error_type else 0)
+            if caught is not None:
+                tracing._mark_error(span, caught)
+            runtime_metrics.record_consumed_message(destination, duration_s, result.error_type)
 
-            except Exception as e:
-                retry_count += 1
-                last_error_type = runtime_metrics.error_type_of(e)
+    async def operation() -> DeliveryResult:
+        nonlocal caught
+        try:
+            value = handler(message)
+            if inspect.isawaitable(value):
+                await value
+        except Exception as error:
+            caught = error
+            raise
+        return DeliveryResult(Settlement.ACK, "processed")
 
-                if retry_count < max_retries:
-                    delay = backoff.get_delay(retry_count - 1)
-                    logger.warning(f"⚠️ Message processing failed (attempt {retry_count}/{max_retries}): {e}. Retrying in {delay:.1f} seconds...")
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(f"❌ Message processing failed after {max_retries} attempts: {e}")
+    async def wait() -> None:
+        await asyncio.sleep(backoff.get_delay(0))
 
-                    # Nack the message (caller should not nack again)
-                    try:
-                        if requeue_on_error:
-                            await message.nack(requeue=True)
-                        else:
-                            await message.nack(requeue=False)
-                    except Exception as nack_err:
-                        logger.warning(f"⚠️ Failed to nack message after retries exhausted: {nack_err}")
+    class _Classifier:
+        def __call__(self, error: BaseException) -> FailureKind:
+            del error
+            return FailureKind.TRANSIENT if requeue_on_error else FailureKind.DETERMINISTIC
 
-                    tracing.set_retry_count(span, retry_count)
-                    runtime_metrics.record_consumed_message(destination, perf_counter() - started, last_error_type)
-                    raise
-
-        tracing.set_retry_count(span, retry_count)
-        runtime_metrics.record_consumed_message(
-            destination,
-            perf_counter() - started,
-            None if handler_succeeded else last_error_type,
-        )
-
-        if handler_succeeded:
-            try:
-                await message.ack()
-            except Exception as e:
-                logger.error(f"❌ Failed to ack message after successful processing: {e}")
-                raise
+    del max_retries
+    await run_delivery(
+        message,
+        operation,
+        classifier=_Classifier(),
+        observer=_Observer(),
+        destination=destination,
+        entity="message",
+        headers=getattr(message, "headers", None),
+        wait_before_requeue=wait if requeue_on_error else None,
+    )
+    if caught is not None:
+        raise caught

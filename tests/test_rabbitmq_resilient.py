@@ -494,17 +494,19 @@ class TestProcessMessageWithRetry:
         message.nack.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_retry_on_failure(self) -> None:
-        """Test retry on handler failure."""
+    async def test_failure_is_not_retried_in_process(self) -> None:
+        """The deprecated retry count never starts a second handler attempt."""
         message = AsyncMock()
         handler = AsyncMock(side_effect=[Exception("Failed"), Exception("Failed"), None])
 
         backoff = ExponentialBackoff(initial_delay=0.01, max_delay=0.1)
 
-        await process_message_with_retry(message, handler, max_retries=3, backoff=backoff)
+        with pytest.raises(Exception, match="Failed"):
+            await process_message_with_retry(message, handler, max_retries=3, backoff=backoff)
 
-        assert handler.call_count == 3
-        message.ack.assert_called_once()
+        assert handler.call_count == 1
+        message.ack.assert_not_called()
+        message.nack.assert_awaited_once_with(requeue=True)
 
     @pytest.mark.asyncio
     async def test_max_retries_exceeded_with_requeue(self) -> None:
@@ -517,7 +519,7 @@ class TestProcessMessageWithRetry:
         with pytest.raises(Exception, match="Failed"):
             await process_message_with_retry(message, handler, max_retries=2, backoff=backoff, requeue_on_error=True)
 
-        assert handler.call_count == 2
+        assert handler.call_count == 1
         message.ack.assert_not_called()
         message.nack.assert_called_once_with(requeue=True)
 
@@ -532,7 +534,7 @@ class TestProcessMessageWithRetry:
         with pytest.raises(Exception, match="Failed"):
             await process_message_with_retry(message, handler, max_retries=2, backoff=backoff, requeue_on_error=False)
 
-        assert handler.call_count == 2
+        assert handler.call_count == 1
         message.ack.assert_not_called()
         message.nack.assert_called_once_with(requeue=False)
 
