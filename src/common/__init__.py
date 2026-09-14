@@ -24,6 +24,20 @@ if TYPE_CHECKING:
         resilient_connection,
     )
     from common.errors import describe_exception
+    from common.events import (
+        Event,
+        EventValidationError,
+        Impression,
+        consent_purposes,
+        event_types,
+        is_valid_event_type,
+        new_event,
+        new_impression,
+        payload_schema_for,
+        surfaces,
+        validate_event,
+        validate_impression,
+    )
     from common.health_server import HealthServer
     from common.identity import (
         AliasRef,
@@ -81,6 +95,18 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "async_resilient_connection": ("common.db_resilience", "async_resilient_connection"),
     "resilient_connection": ("common.db_resilience", "resilient_connection"),
     "describe_exception": ("common.errors", "describe_exception"),
+    "Event": ("common.events", "Event"),
+    "EventValidationError": ("common.events", "EventValidationError"),
+    "Impression": ("common.events", "Impression"),
+    "consent_purposes": ("common.events", "consent_purposes"),
+    "event_types": ("common.events", "event_types"),
+    "is_valid_event_type": ("common.events", "is_valid_event_type"),
+    "new_event": ("common.events", "new_event"),
+    "new_impression": ("common.events", "new_impression"),
+    "payload_schema_for": ("common.events", "payload_schema_for"),
+    "surfaces": ("common.events", "surfaces"),
+    "validate_event": ("common.events", "validate_event"),
+    "validate_impression": ("common.events", "validate_impression"),
     "HealthServer": ("common.health_server", "HealthServer"),
     "AliasRef": ("common.identity", "AliasRef"),
     "alias_sources": ("common.identity", "alias_sources"),

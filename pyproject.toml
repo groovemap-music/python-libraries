@@ -58,6 +58,7 @@ dev = [
     "cyclonedx-bom>=7.3.1",
     "fastapi>=0.121.0",
     "httpx>=0.28.1",
+    "jsonschema>=4.26.0",
     "mypy>=2.3.1",
     "pip-audit>=2.10.1",
     "pip-licenses>=5.5.5",

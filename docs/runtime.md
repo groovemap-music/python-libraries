@@ -13,6 +13,7 @@ from an implementation module, when a name appears here.
 | --- | --- |
 | Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging` |
 | Data and diagnostics | `normalize_record`, `describe_exception` |
+| First-party events | `Event`, `Impression`, `EventValidationError`, `event_types`, `surfaces`, `consent_purposes`, `payload_schema_for`, `is_valid_event_type`, `validate_event`, `validate_impression`, `new_event`, `new_impression` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
 | Health and outage control | `HealthServer`, `OutageBackoff` |
 | Media taxonomy | `map_discogs_formats`, `map_musicbrainz_release`, `legacy_format_names_to_media`, `flatten_descriptions`, `families_of`, `family_ids`, `medium_ids`, `medium_label` |
@@ -402,6 +403,44 @@ Psycopg is needed only to hold the connection these two functions act on. It is 
 under `TYPE_CHECKING` only, so `import common.identity` succeeds with the base install and the
 vocabulary accessors and `new_id()` work there; install the `postgres` extra to have a
 connection to pass.
+
+## Event boundary
+
+[ADR 0010 in the `design`
+repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md)
+adds two append-only tables in an `activity` schema and publishes a JSON Schema for each
+envelope. Both schemas and the closed version 1 event-type vocabulary are vendored into this
+distribution as package data, and `common.events` is the shared Python model.
+
+- `event_types()`, `surfaces()`, and `consent_purposes()` return the closed sets as tuples in
+  vocabulary order; `is_valid_event_type(event_type)` answers membership.
+  `payload_schema_for(event_type)` returns a read-only view of that type's payload sub-schema,
+  which still references the vendored document's `$defs`.
+- `Event` and `Impression` are frozen dataclasses carrying every column of their table.
+  `to_row()` returns the row keyed by column name, ready to insert; `from_mapping(document)`
+  validates a decoded wire document and builds the model from it.
+- `validate_event(document)` and `validate_impression(document)` check a document against the
+  published contract and raise `EventValidationError` naming the first field that failed. Values
+  may be JSON scalars, as a decoded document carries them, or the native `UUID` and `datetime`
+  objects `to_row()` produces.
+- `new_event(...)` and `new_impression(...)` mint a validated model, stamping the id, the event
+  type's schema version, and `recorded_at`. `producer`, `consent_purposes`, and
+  `idempotency_key` are explicit, because none of the three has a safe default: the first names
+  which service wrote the row, the second is the consent snapshot the row is interpreted under
+  later, and a generated idempotency key would defeat the retry safety it exists for.
+
+The validation is the standard library only, so no schema library enters this distribution's
+base dependencies and a consumer pinned to an older lockfile keeps resolving. What keeps it
+honest is `tests/test_events.py`, which validates all twenty-two vendored fixtures against the
+vendored JSON Schemas with `jsonschema` — a development dependency — and asserts the standard
+library validator returns the same verdict on every one, including the four fixtures the design
+publishes as invalid. The Python model therefore cannot drift from the published schema without
+a failing test.
+
+`Impression` carries two fields the published envelope does not: `recorded_at` and
+`consent_purposes`. Both are columns of the landed `activity.impressions` table, the second
+`NOT NULL`, so a row cannot be written without them while the wire envelope leaves them to the
+writer. They are optional on the way in and always present in `to_row()`.
 
 ## Compatibility boundary
 
