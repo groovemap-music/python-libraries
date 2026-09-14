@@ -93,7 +93,7 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
 
 
 def validate_library_revision(matrix: dict[str, Any]) -> None:
-    """Require the recorded revision and an unchanged package tree after it."""
+    """Require the recorded revision and an unchanged distributable package contract."""
     revision = matrix["library"]["revision"]
     run(GIT, "cat-file", "-e", f"{revision}^{{commit}}")
     subprocess.run(  # noqa: S603
@@ -104,14 +104,29 @@ def validate_library_revision(matrix: dict[str, Any]) -> None:
             revision,
             "HEAD",
             "--",
-            "pyproject.toml",
-            "agent-tools/pyproject.toml",
             "src",
             "agent-tools/src",
         ],
         cwd=ROOT,
         check=True,
     )
+    for relative_path in ("pyproject.toml", "agent-tools/pyproject.toml"):
+        recorded = tomllib.loads(run(GIT, "show", f"{revision}:{relative_path}"))
+        current = tomllib.loads((ROOT / relative_path).read_text())
+        assert package_contract(current) == package_contract(recorded), f"{relative_path} changed the recorded package contract"
+
+
+def package_contract(config: dict[str, Any]) -> dict[str, Any]:
+    """Project the metadata that can change a built or consumer-installed distribution."""
+    tool = config.get("tool", {})
+    uv = tool.get("uv", {})
+    return {
+        "build-system": config.get("build-system"),
+        "project": config.get("project"),
+        "hatch-build": tool.get("hatch", {}).get("build"),
+        "uv-sources": uv.get("sources"),
+        "uv-workspace": uv.get("workspace"),
+    }
 
 
 def credential_free_environment() -> dict[str, str]:
