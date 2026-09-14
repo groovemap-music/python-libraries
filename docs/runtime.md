@@ -396,13 +396,14 @@ one `INSERT ... ON CONFLICT DO NOTHING` against the partial unique index on
 a concurrent writer won. A catalog item minted for a ref that lost such a race is deleted in the
 same pass, so a race leaves no orphan. Both return only the refs that resolved.
 
-Both run inside the **caller's** transaction and open no SAVEPOINT: the loaders own their
-transaction boundaries, and a nested rollback point would change their failure semantics.
+Both run inside the **caller's** transaction, on the **caller's** connection, and open no
+SAVEPOINT: the loaders own their transaction boundaries, and a nested rollback point would
+change their failure semantics.
 
-Psycopg is needed only to hold the connection these two functions act on. It is imported here
-under `TYPE_CHECKING` only, so `import common.identity` succeeds with the base install and the
-vocabulary accessors and `new_id()` work there; install the `postgres` extra to have a
-connection to pass.
+Only `resolve_aliases` and `attach_aliases` need Psycopg, to hold the connection they act on.
+It is imported here under `TYPE_CHECKING` only, so `import common.identity` succeeds with the
+base install and the vocabulary accessors and `new_id()` work there; install the `postgres`
+extra to have a connection to pass to either of the two resolve functions.
 
 ## Event boundary
 
