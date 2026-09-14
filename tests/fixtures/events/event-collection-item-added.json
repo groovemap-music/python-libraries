@@ -1,0 +1,27 @@
+{
+  "name": "event-collection-item-added",
+  "envelope": "event",
+  "valid": true,
+  "description": "An item entered a user's collection as a specific artifact and owned copy.",
+  "document": {
+    "event_id": "0192f0a1-0000-7000-8000-000000000008",
+    "event_type": "collection.item_added",
+    "schema_version": 1,
+    "subject_id": "0192f0a1-0000-7000-8000-00000000a001",
+    "session_id": "0192f0a1-0000-7000-8000-00000000b001",
+    "occurred_at": "2026-09-13T18:05:00Z",
+    "recorded_at": "2026-09-13T18:05:00.412Z",
+    "producer": "catalog-api",
+    "consent_purposes": [
+      "product_analytics"
+    ],
+    "model_version": null,
+    "feature_version": null,
+    "idempotency_key": "collection.item_added:0192f0a1-0000-7000-8000-00000000a001:1",
+    "payload": {
+      "item_id": "0192f0b2-0000-7000-8000-00000000c001",
+      "artifact_id": "0192f0b2-0000-7000-8000-00000000c002",
+      "owned_copy_id": "0192f0b2-0000-7000-8000-00000000c003"
+    }
+  }
+}

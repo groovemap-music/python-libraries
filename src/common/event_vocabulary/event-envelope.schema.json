@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groovemap.music/schemas/event-envelope-v1.json",
+  "title": "GrooveMap first-party event envelope",
+  "description": "The typed envelope every row of activity.events carries (ADR 0010). Every column is present on the wire; a column whose value is unknown at write time is an explicit null.",
+  "x-license": "MIT",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "event_type",
+    "schema_version",
+    "subject_id",
+    "session_id",
+    "occurred_at",
+    "recorded_at",
+    "producer",
+    "consent_purposes",
+    "model_version",
+    "feature_version",
+    "idempotency_key",
+    "payload"
+  ],
+  "properties": {
+    "event_id": { "$ref": "#/$defs/uuid" },
+    "event_type": { "$ref": "#/$defs/eventTypeId" },
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "subject_id": { "$ref": "#/$defs/uuid" },
+    "session_id": { "$ref": "#/$defs/nullableUuid" },
+    "occurred_at": { "$ref": "#/$defs/timestamp" },
+    "recorded_at": { "$ref": "#/$defs/timestamp" },
+    "producer": { "type": "string", "minLength": 1 },
+    "consent_purposes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["product_analytics", "model_training"] }
+    },
+    "model_version": { "$ref": "#/$defs/nullableName" },
+    "feature_version": { "$ref": "#/$defs/nullableName" },
+    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "payload": { "type": "object" }
+  },
+  "$defs": {
+    "eventTypeId": {
+      "enum": [
+        "search.query",
+        "search.result_impression",
+        "recommendation.shown",
+        "recommendation.opened",
+        "recommendation.saved",
+        "recommendation.dismissed",
+        "recommendation.hidden",
+        "collection.item_added",
+        "collection.item_removed",
+        "collection.item_updated",
+        "wantlist.item_added",
+        "wantlist.item_removed",
+        "consent.granted",
+        "consent.revoked",
+        "account.export_requested",
+        "account.erasure_requested"
+      ]
+    },
+    "nullableName": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+    "nullableUuid": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "uuid": { "type": "string", "format": "uuid" }
+  }
+}

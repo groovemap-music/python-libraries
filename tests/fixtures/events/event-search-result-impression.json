@@ -1,0 +1,28 @@
+{
+  "name": "event-search-result-impression",
+  "envelope": "event",
+  "valid": true,
+  "description": "One search result shown at a one-based position in a result list.",
+  "document": {
+    "event_id": "0192f0a1-0000-7000-8000-000000000002",
+    "event_type": "search.result_impression",
+    "schema_version": 1,
+    "subject_id": "0192f0a1-0000-7000-8000-00000000a001",
+    "session_id": "0192f0a1-0000-7000-8000-00000000b001",
+    "occurred_at": "2026-09-13T18:05:00Z",
+    "recorded_at": "2026-09-13T18:05:00.412Z",
+    "producer": "catalog-api",
+    "consent_purposes": [
+      "product_analytics"
+    ],
+    "model_version": null,
+    "feature_version": null,
+    "idempotency_key": "search.result_impression:0192f0a1-0000-7000-8000-00000000a001:1",
+    "payload": {
+      "impression_id": "0192f0c3-0000-7000-8000-00000000d001",
+      "item_id": "0192f0b2-0000-7000-8000-00000000c001",
+      "position": 3,
+      "request_id": "0192f0c3-0000-7000-8000-00000000d003"
+    }
+  }
+}

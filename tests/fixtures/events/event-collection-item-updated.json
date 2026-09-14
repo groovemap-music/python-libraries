@@ -1,0 +1,31 @@
+{
+  "name": "event-collection-item-updated",
+  "envelope": "event",
+  "valid": true,
+  "description": "A user changed what they record about an item they hold.",
+  "document": {
+    "event_id": "0192f0a1-0000-7000-8000-00000000000a",
+    "event_type": "collection.item_updated",
+    "schema_version": 1,
+    "subject_id": "0192f0a1-0000-7000-8000-00000000a001",
+    "session_id": "0192f0a1-0000-7000-8000-00000000b001",
+    "occurred_at": "2026-09-13T18:05:00Z",
+    "recorded_at": "2026-09-13T18:05:00.412Z",
+    "producer": "catalog-api",
+    "consent_purposes": [
+      "product_analytics"
+    ],
+    "model_version": null,
+    "feature_version": null,
+    "idempotency_key": "collection.item_updated:0192f0a1-0000-7000-8000-00000000a001:1",
+    "payload": {
+      "item_id": "0192f0b2-0000-7000-8000-00000000c001",
+      "artifact_id": "0192f0b2-0000-7000-8000-00000000c002",
+      "owned_copy_id": "0192f0b2-0000-7000-8000-00000000c003",
+      "changed_fields": [
+        "condition",
+        "notes"
+      ]
+    }
+  }
+}

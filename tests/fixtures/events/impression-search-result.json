@@ -1,0 +1,19 @@
+{
+  "name": "impression-search-result",
+  "envelope": "impression",
+  "valid": true,
+  "description": "A search result shown at position three under the search surface.",
+  "document": {
+    "impression_id": "0192f0c3-0000-7000-8000-00000000d001",
+    "subject_id": "0192f0a1-0000-7000-8000-00000000a001",
+    "surface": "search",
+    "policy_id": "lexical-rank-v1",
+    "candidate_set_id": "0192f0c3-0000-7000-8000-00000000d002",
+    "position": 3,
+    "item_id": "0192f0b2-0000-7000-8000-00000000c001",
+    "score": 12.5,
+    "propensity": 1,
+    "request_id": "0192f0c3-0000-7000-8000-00000000d003",
+    "occurred_at": "2026-09-13T18:05:00Z"
+  }
+}

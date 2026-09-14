@@ -83,6 +83,43 @@ update `source.json`'s `commit` and `sha256` fields to match. The same vocabular
 the same way into `discogs-ingestion` and `musicbrainz-ingestion`; keep all three in step with
 the same reviewed `design` commit.
 
+## Vendored identity vocabulary
+
+`groovemap-runtime` ships the canonical identity vocabulary that [ADR 0009 in the `design`
+repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0009-native-identity-and-provider-aliases.md)
+makes authoritative for every GrooveMap service. `src/common/identity_vocabulary/identity-vocabulary.json`
+is vendored verbatim, byte for byte, from `taxonomy/identity/v1/identity-vocabulary.json` in
+the `design` repository; it ships as package data inside the `groovemap-runtime` wheel and is
+not edited in this repository. `src/common/identity_vocabulary/source.json` beside it records
+the source commit and, per vendored file, its path and SHA-256 digest. `just check` runs
+`scripts/check-identity-vocabulary.py`, which recomputes each digest and fails if it differs
+from `source.json` or if the file is missing — a drift means the vendored copy is stale.
+
+To re-vendor after an upstream change: copy the new file from the reviewed `design` commit,
+recompute its digest (`shasum -a 256 src/common/identity_vocabulary/identity-vocabulary.json`),
+and update `source.json`'s `commit` and the file's `sha256` field to match.
+
+## Vendored event vocabulary
+
+`groovemap-runtime` ships the canonical event vocabulary and JSON Schemas that [ADR 0010 in
+the `design`
+repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md)
+makes authoritative for every GrooveMap service. `src/common/event_vocabulary/event-types.json`,
+`event-envelope.schema.json`, and `impression.schema.json` are vendored verbatim, byte for
+byte, from `taxonomy/events/v1/` in the `design` repository; they ship as package data inside
+the `groovemap-runtime` wheel and are not edited in this repository.
+`src/common/event_vocabulary/source.json` beside them records the source commit and, per
+vendored file, its path and SHA-256 digest. The conformance fixtures under
+`taxonomy/events/v1/fixtures/` at the same commit are vendored the same way into
+`tests/fixtures/events/`, with their own `source.json`. `just check` runs
+`scripts/check-event-vocabulary.py`, which recomputes every recorded digest across both
+`source.json` files and fails if any differs or if any file is missing — a drift means a
+vendored copy is stale.
+
+To re-vendor after an upstream change: copy every changed file from the reviewed `design`
+commit, recompute each digest (`shasum -a 256 <file>`), and update the relevant `source.json`'s
+`commit` and per-file `sha256` fields to match.
+
 ## License and history
 
 The current tree is licensed under the [MIT License](LICENSE). Its relevant source history was
