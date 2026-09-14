@@ -92,3 +92,52 @@ async def test_observer_failure_cannot_change_settlement() -> None:
         entity="release",
     )
     delivery.ack.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settlement", [Settlement.ACK, Settlement.REQUEUE, Settlement.REJECT])
+async def test_terminal_failure_is_visible_without_a_second_call(settlement: Settlement) -> None:
+    delivery = AsyncMock()
+    failure = RuntimeError("broker settlement failed")
+    if settlement is Settlement.ACK:
+        delivery.ack.side_effect = failure
+    else:
+        delivery.nack.side_effect = failure
+    with pytest.raises(RuntimeError, match="broker settlement failed"):
+        await run_delivery(
+            delivery,
+            AsyncMock(return_value=DeliveryResult(settlement, "handled")),
+            classifier=Mock(),
+            observer=Observer(),
+            destination="queue",
+            entity="release",
+        )
+    assert delivery.ack.await_count + delivery.nack.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ["enter", "exit"])
+async def test_observer_context_failures_are_isolated(failure_point: str) -> None:
+    class BrokenContext:
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            if failure_point == "enter":
+                raise RuntimeError("observer enter")
+            return "span"
+
+        def __exit__(self, *_args: object) -> None:
+            if failure_point == "exit":
+                raise RuntimeError("observer exit")
+
+    observer = Observer()
+    observer.consume = Mock(return_value=BrokenContext())  # type: ignore[method-assign]
+    delivery = AsyncMock()
+    result = await run_delivery(
+        delivery,
+        AsyncMock(return_value=DeliveryResult(Settlement.ACK, "ok")),
+        classifier=Mock(),
+        observer=observer,
+        destination="queue",
+        entity="release",
+    )
+    assert result.settlement is Settlement.ACK
+    delivery.ack.assert_awaited_once()

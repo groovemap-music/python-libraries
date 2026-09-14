@@ -178,13 +178,18 @@ class AsyncBatchEngine[KeyT, PayloadT]:
             self._observer.settled(entity=str(key), result=delivery_result, duration_s=perf_counter() - started, span=span)
 
     async def _settle(self, key: KeyT, items: Sequence[_Pending[PayloadT]], results: Sequence[BatchItemResult], started: float, span: Any) -> None:
-        for item, result in zip(items, results, strict=True):
-            if result.settlement is Settlement.ACK:
-                await item.delivery.ack()
+        for index, (item, result) in enumerate(zip(items, results, strict=True)):
+            try:
+                if result.settlement is Settlement.ACK:
+                    await item.delivery.ack()
+                else:
+                    await item.delivery.nack(requeue=False)
+            except BaseException:
+                self._restore(key, items[index:])
+                raise
             else:
-                await item.delivery.nack(requeue=False)
-            self._capacity.release()
-            self._observe_settled(key, result, started, span)
+                self._capacity.release()
+                self._observe_settled(key, result, started, span)
 
     async def flush(self, key: KeyT) -> bool:
         if key not in self._queues:
@@ -205,10 +210,6 @@ class AsyncBatchEngine[KeyT, PayloadT]:
                     with _IsolatedContext(observation) as span:
                         try:
                             results = list(await self._sink.write(key, [item.payload for item in items]))
-                            if len(results) != len(items):
-                                raise ValueError("batch sink must return exactly one result per payload")
-                            if any(result.settlement not in (Settlement.ACK, Settlement.REJECT) for result in results):
-                                raise ValueError("batch sink returned a non-terminal result")
                         except asyncio.CancelledError:
                             self._restore(key, items)
                             raise
@@ -238,6 +239,15 @@ class AsyncBatchEngine[KeyT, PayloadT]:
                             if no_progress >= self._policy.max_drain_retries:
                                 return False
                             continue
+
+                        try:
+                            if len(results) != len(items):
+                                raise ValueError("batch sink must return exactly one result per payload")
+                            if any(result.settlement not in (Settlement.ACK, Settlement.REJECT) for result in results):
+                                raise ValueError("batch sink returned a non-terminal result")
+                        except Exception:
+                            self._restore(key, items)
+                            raise
 
                         await self._settle(key, items, results, started, span)
                         self._batch_sizes[key] = min(self._policy.batch_size, self._batch_sizes[key] + 1)
