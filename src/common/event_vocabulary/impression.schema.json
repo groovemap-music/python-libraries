@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groovemap.music/schemas/impression-v1.json",
+  "title": "GrooveMap recommendation impression",
+  "description": "The row of activity.impressions that records a ranked item as it was shown (ADR 0010). Positions are one-based.",
+  "x-license": "MIT",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "impression_id",
+    "subject_id",
+    "surface",
+    "policy_id",
+    "candidate_set_id",
+    "position",
+    "item_id",
+    "score",
+    "propensity",
+    "request_id",
+    "occurred_at"
+  ],
+  "properties": {
+    "impression_id": { "$ref": "#/$defs/uuid" },
+    "subject_id": { "$ref": "#/$defs/uuid" },
+    "surface": { "$ref": "#/$defs/surfaceId" },
+    "policy_id": { "type": "string", "minLength": 1 },
+    "candidate_set_id": { "$ref": "#/$defs/uuid" },
+    "position": { "type": "integer", "minimum": 1 },
+    "item_id": { "$ref": "#/$defs/uuid" },
+    "score": { "type": "number" },
+    "propensity": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+    "request_id": { "$ref": "#/$defs/uuid" },
+    "occurred_at": { "$ref": "#/$defs/timestamp" }
+  },
+  "$defs": {
+    "surfaceId": { "enum": ["search", "recommendation", "collection", "wantlist", "consent", "account"] },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "uuid": { "type": "string", "format": "uuid" }
+  }
+}

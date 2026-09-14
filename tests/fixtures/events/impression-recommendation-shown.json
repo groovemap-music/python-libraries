@@ -1,0 +1,19 @@
+{
+  "name": "impression-recommendation-shown",
+  "envelope": "impression",
+  "valid": true,
+  "description": "A recommendation shown at position one, with the policy, candidate set, score, and propensity that only exist at decision time.",
+  "document": {
+    "impression_id": "0192f0c3-0000-7000-8000-00000000d001",
+    "subject_id": "0192f0a1-0000-7000-8000-00000000a001",
+    "surface": "recommendation",
+    "policy_id": "similar-artist-v3",
+    "candidate_set_id": "0192f0c3-0000-7000-8000-00000000d002",
+    "position": 1,
+    "item_id": "0192f0b2-0000-7000-8000-00000000c001",
+    "score": 0.8125,
+    "propensity": 0.25,
+    "request_id": "0192f0c3-0000-7000-8000-00000000d003",
+    "occurred_at": "2026-09-13T18:05:00Z"
+  }
+}

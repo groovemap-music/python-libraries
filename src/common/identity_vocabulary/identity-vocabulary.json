@@ -1,0 +1,149 @@
+{
+  "vocabulary_version": "1",
+  "license": "MIT",
+  "native_id_format": "uuid_v7",
+  "entity_kinds": [
+    {
+      "id": "release",
+      "label": "Release",
+      "native_table": "catalog_items",
+      "user_creatable": false,
+      "description": "A catalog entity describing one published release."
+    },
+    {
+      "id": "master",
+      "label": "Master",
+      "native_table": "catalog_items",
+      "user_creatable": false,
+      "description": "A catalog entity grouping the releases of one work of record."
+    },
+    {
+      "id": "artist",
+      "label": "Artist",
+      "native_table": "catalog_items",
+      "user_creatable": false,
+      "description": "A catalog entity describing a performing or credited party."
+    },
+    {
+      "id": "label",
+      "label": "Label",
+      "native_table": "catalog_items",
+      "user_creatable": false,
+      "description": "A catalog entity describing an issuing label."
+    },
+    {
+      "id": "artifact",
+      "label": "Artifact",
+      "native_table": "artifacts",
+      "user_creatable": true,
+      "description": "One specific edition of a release-kind catalog item, creatable by a user when no catalog match exists."
+    },
+    {
+      "id": "owned_copy",
+      "label": "Owned copy",
+      "native_table": "owned_copies",
+      "user_creatable": true,
+      "description": "A physical copy a user holds, identified natively rather than by a provider collection row."
+    },
+    {
+      "id": "collection_snapshot",
+      "label": "Collection snapshot",
+      "native_table": "collection_snapshots",
+      "user_creatable": true,
+      "description": "A user's collection membership at an instant, content-hashed."
+    },
+    {
+      "id": "observation",
+      "label": "Observation",
+      "native_table": "observations",
+      "user_creatable": true,
+      "description": "User-captured evidence about an owned copy or an artifact: kind, value, source, confidence, and observation time."
+    }
+  ],
+  "providers": [
+    {
+      "id": "discogs",
+      "label": "Discogs",
+      "kind": "catalog",
+      "description": "Identifiers assigned by the Discogs catalog."
+    },
+    {
+      "id": "musicbrainz",
+      "label": "MusicBrainz",
+      "kind": "catalog",
+      "description": "Identifiers assigned by the MusicBrainz catalog."
+    },
+    {
+      "id": "wikidata",
+      "label": "Wikidata",
+      "kind": "catalog",
+      "description": "Identifiers assigned by Wikidata."
+    },
+    {
+      "id": "barcode",
+      "label": "Barcode",
+      "kind": "identifier",
+      "description": "A printed product barcode carried by a physical edition."
+    },
+    {
+      "id": "catalog_number",
+      "label": "Catalogue number",
+      "kind": "identifier",
+      "description": "A catalogue number assigned by an issuing label."
+    },
+    {
+      "id": "isrc",
+      "label": "ISRC",
+      "kind": "identifier",
+      "description": "An International Standard Recording Code carried by a recording."
+    },
+    {
+      "id": "matrix",
+      "label": "Matrix inscription",
+      "kind": "identifier",
+      "description": "A matrix or runout inscription stamped into a physical copy."
+    }
+  ],
+  "sources": [
+    {
+      "id": "catalog",
+      "label": "Catalog",
+      "description": "The alias was read from the provider's own catalog during ingestion."
+    },
+    {
+      "id": "user",
+      "label": "User",
+      "description": "A person asserted the alias."
+    },
+    {
+      "id": "inference",
+      "label": "Inference",
+      "description": "A matching heuristic proposed the alias; it is evidence, not an assertion."
+    }
+  ],
+  "provider_aliases": {
+    "columns": [
+      "provider",
+      "external_id",
+      "entity_kind",
+      "native_id",
+      "valid_from",
+      "valid_to",
+      "confidence",
+      "source",
+      "asserted_at"
+    ],
+    "required": [
+      "provider",
+      "external_id",
+      "entity_kind",
+      "native_id",
+      "valid_from",
+      "confidence",
+      "source",
+      "asserted_at"
+    ],
+    "unique_on": ["provider", "entity_kind", "external_id"],
+    "unique_scope": "currently_valid_row"
+  }
+}

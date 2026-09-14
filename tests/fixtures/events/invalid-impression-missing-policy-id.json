@@ -1,0 +1,19 @@
+{
+  "name": "invalid-impression-missing-policy-id",
+  "envelope": "impression",
+  "valid": false,
+  "rejection": "impression-missing-policy-id",
+  "description": "An impression without the policy that ranked it, which cannot be recovered after the request returns.",
+  "document": {
+    "impression_id": "0192f0c3-0000-7000-8000-00000000d001",
+    "subject_id": "0192f0a1-0000-7000-8000-00000000a001",
+    "surface": "recommendation",
+    "candidate_set_id": "0192f0c3-0000-7000-8000-00000000d002",
+    "position": 1,
+    "item_id": "0192f0b2-0000-7000-8000-00000000c001",
+    "score": 0.8125,
+    "propensity": 0.25,
+    "request_id": "0192f0c3-0000-7000-8000-00000000d003",
+    "occurred_at": "2026-09-13T18:05:00Z"
+  }
+}
