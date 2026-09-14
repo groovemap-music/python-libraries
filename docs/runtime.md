@@ -13,6 +13,8 @@ from an implementation module, when a name appears here.
 | --- | --- |
 | Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging` |
 | Data and diagnostics | `normalize_record`, `describe_exception` |
+| Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `run_delivery` |
+| Discogs batch lifecycle | `BatchItemResult`, `BatchPolicy`, `BatchSink`, `BatchObserver`, `AsyncBatchEngine` |
 | First-party events | `Event`, `Impression`, `EventValidationError`, `event_types`, `surfaces`, `consent_purposes`, `payload_schema_for`, `is_valid_event_type`, `validate_event`, `validate_impression`, `new_event`, `new_impression` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
 | Health and outage control | `HealthServer`, `OutageBackoff` |
@@ -31,6 +33,29 @@ modules are implementation details or transitional service helpers and do not ca
 compatibility promises.
 In particular, a leading-underscore helper is private even if an existing GrooveMap service still
 imports it during migration.
+
+## Delivery migration
+
+`run_delivery` makes exactly one handler attempt and is the terminal settlement authority for
+single-delivery consumers. Handlers return `DeliveryResult`; `DEFER` deliberately leaves the
+delivery untouched. Concrete exception membership, validation, control state, QoS, storage, and
+metric names stay in each owner repository through its classifier and observer adapters.
+
+`process_message_with_retry` remains import-compatible during migration, but is deprecated.
+`max_retries` no longer starts an in-process retry loop: a failure is settled once for broker
+redelivery (or rejection), and the original handler exception remains visible to the caller.
+
+`AsyncBatchEngine` is optional application machinery for the two Discogs consumers only. After
+`submit`, it alone settles queued deliveries. The owner hive still supplies serialization,
+validation and normalization, database transactions through `BatchSink`, concrete exception
+classification, telemetry instruments and outcome mapping, control/completion state, QoS, and
+purge or maintenance policy. Transient failures retain original order without settlement;
+deterministic failures shrink toward `min_batch_size` and reject only at the poison threshold;
+bounded drain failure retains work for `run_periodic`.
+
+Consumers must pin immutable revision `f634851bb7f4598bd6a2b928b95e829f064cdd8f`, which contains
+both contracts, rather than a moving branch. Each owner hive should copy that revision into its
+dependency lock during migration.
 
 ## Optional capabilities
 
