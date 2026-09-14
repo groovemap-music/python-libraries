@@ -2,7 +2,7 @@
   "schema_version": 1,
   "library": {
     "repository": "groovemap-music/python-libraries",
-    "revision": "9070407a3f89f022fa1d5d553f6b00f8236bedec",
+    "revision": "f634851bb7f4598bd6a2b928b95e829f064cdd8f",
     "python": "3.14.5",
     "packages": [
       "groovemap-runtime==0.1.0",
