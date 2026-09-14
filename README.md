@@ -54,6 +54,16 @@ Network access and publishing stay outside `just check`. `audit` needs current v
 data, while `bump`, `release-dry-run`, and `publication-readiness` remain local-only; none publishes,
 tags, pushes, or changes repository visibility.
 
+The default `just test` and `just check` paths exclude tests marked `integration` and never
+contact a broker. `just test-integration` runs `tests/test_rabbitmq_integration.py`; without
+`RABBITMQ_HOST` it reports those live-broker tests as skipped. To run them locally, provide a
+reachable RabbitMQ 4 management broker and the documented `RABBITMQ_*` test settings.
+
+CI provisions a digest-pinned RabbitMQ 4 management container, waits for broker readiness,
+and passes `just test-integration` through the reusable workflow's integration command. That
+command is part of the single `required` job, so a heartbeat-negotiation or reconnect failure
+blocks both ordinary and Dependabot pull requests with no actor-specific reduced path.
+
 Both distributions' wheels and source archives are written directly to `dist/`. To prove that
 the wheels work independently, run `just install-check`, which creates isolated temporary
 environments and imports both packages from their built wheels. `just release-dry-run` also

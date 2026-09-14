@@ -17,7 +17,31 @@ jobs:
     with:
       runner: ubuntu-24.04
       language: python
-      setup-command: just setup
+      setup-command: |
+        just setup
+        docker run --detach --rm \
+          --name python-libraries-rabbitmq \
+          --publish 5672:5672 \
+          --publish 15672:15672 \
+          --env RABBITMQ_DEFAULT_USER=groovemap \
+          --env RABBITMQ_DEFAULT_PASS=groovemap \
+          --env "RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbitmq_management disable_management_stats false" \
+          rabbitmq:4-management@sha256:ffd1b50c522ad20172ffd6716a2f41db375c7269560c8f3fb9a694e210ef0852
+        for attempt in {1..30}; do
+          if docker exec python-libraries-rabbitmq rabbitmq-diagnostics -q ping; then
+            break
+          fi
+          if [[ "${attempt}" == "30" ]]; then
+            docker logs python-libraries-rabbitmq
+            exit 1
+          fi
+          sleep 2
+        done
+        {
+          echo "RABBITMQ_HOST=127.0.0.1"
+          echo "RABBITMQ_USERNAME=groovemap"
+          echo "RABBITMQ_PASSWORD=groovemap"
+        } >> "${GITHUB_ENV}"
       check-command: just check
       coverage-command: just coverage
       audit-command: just audit
@@ -25,6 +49,7 @@ jobs:
       secret-scan-command: just secret-scan
       package-command: just build
       install-command: just install-check
+      integration-command: just test-integration
       coverage-files: coverage.xml
       coverage-flags: python,libraries
       upload-codecov: true
