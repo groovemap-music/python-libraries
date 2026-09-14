@@ -33,7 +33,6 @@ RUNTIME_EXPORTS = {
     "OutageBackoff",
     "ResilientConnection",
     "ResilientNeo4jDriver",
-    "ResilientPostgreSQLPool",
     "ResilientRabbitMQConnection",
     "alias_sources",
     "async_resilient_connection",

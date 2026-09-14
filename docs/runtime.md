@@ -19,7 +19,7 @@ from an implementation module, when a name appears here.
 | Media taxonomy | `map_discogs_formats`, `map_musicbrainz_release`, `legacy_format_names_to_media`, `flatten_descriptions`, `families_of`, `family_ids`, `medium_ids`, `medium_label` |
 | Native identity | `AliasRef`, `entity_kinds`, `catalog_kinds`, `providers`, `alias_sources`, `is_valid_entity_kind`, `is_valid_provider`, `is_valid_alias_source`, `new_id`, `resolve_aliases`, `attach_aliases` |
 | Neo4j | `AsyncResilientNeo4jDriver`, `ResilientNeo4jDriver`, `with_async_neo4j_retry`, `with_neo4j_retry` |
-| PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL`, `ResilientPostgreSQLPool` |
+| PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL` |
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
 | RabbitMQ | `AsyncResilientRabbitMQ`, `ResilientRabbitMQConnection`, `process_message_with_retry` |
 | Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx`, `start_event_loop_monitor` |

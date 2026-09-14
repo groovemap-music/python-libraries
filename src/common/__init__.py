@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     )
     from common.neo4j_resilient import AsyncResilientNeo4jDriver, ResilientNeo4jDriver, with_async_neo4j_retry, with_neo4j_retry
     from common.outage_backoff import OutageBackoff
-    from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL, ResilientPostgreSQLPool
+    from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL
     from common.query_debug import execute_sql, is_db_profiling, is_debug, log_cypher_query, log_sql_query
     from common.rabbitmq_resilient import AsyncResilientRabbitMQ, ResilientRabbitMQConnection, process_message_with_retry
     from common.telemetry import (
@@ -134,7 +134,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "OutageBackoff": ("common.outage_backoff", "OutageBackoff"),
     "AsyncPostgreSQLPool": ("common.postgres_resilient", "AsyncPostgreSQLPool"),
     "AsyncResilientPostgreSQL": ("common.postgres_resilient", "AsyncResilientPostgreSQL"),
-    "ResilientPostgreSQLPool": ("common.postgres_resilient", "ResilientPostgreSQLPool"),
     "execute_sql": ("common.query_debug", "execute_sql"),
     "is_db_profiling": ("common.query_debug", "is_db_profiling"),
     "is_debug": ("common.query_debug", "is_debug"),
