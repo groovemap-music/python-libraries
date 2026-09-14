@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 __path__ = extend_path(__path__, __name__)
 
 if TYPE_CHECKING:
+    from common.batch import AsyncBatchEngine, BatchItemResult, BatchObserver, BatchPolicy, BatchSink
     from common.config import neo4j_security_kwargs, parse_postgres_host_port, setup_logging
     from common.data_normalizer import normalize_record
     from common.db_resilience import (
@@ -23,8 +24,8 @@ if TYPE_CHECKING:
         async_resilient_connection,
         resilient_connection,
     )
-    from common.errors import describe_exception
     from common.delivery import Delivery, DeliveryObserver, DeliveryResult, FailureClassifier, FailureKind, Settlement, run_delivery
+    from common.errors import describe_exception
     from common.events import (
         Event,
         EventValidationError,
@@ -80,6 +81,11 @@ if TYPE_CHECKING:
 
 
 _EXPORTS: dict[str, tuple[str, str]] = {
+    "AsyncBatchEngine": ("common.batch", "AsyncBatchEngine"),
+    "BatchItemResult": ("common.batch", "BatchItemResult"),
+    "BatchObserver": ("common.batch", "BatchObserver"),
+    "BatchPolicy": ("common.batch", "BatchPolicy"),
+    "BatchSink": ("common.batch", "BatchSink"),
     "neo4j_security_kwargs": ("common.config", "neo4j_security_kwargs"),
     "parse_postgres_host_port": ("common.config", "parse_postgres_host_port"),
     "setup_logging": ("common.config", "setup_logging"),

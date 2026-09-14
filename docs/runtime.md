@@ -14,6 +14,7 @@ from an implementation module, when a name appears here.
 | Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging` |
 | Data and diagnostics | `normalize_record`, `describe_exception` |
 | Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `run_delivery` |
+| Discogs batch lifecycle | `BatchItemResult`, `BatchPolicy`, `BatchSink`, `BatchObserver`, `AsyncBatchEngine` |
 | First-party events | `Event`, `Impression`, `EventValidationError`, `event_types`, `surfaces`, `consent_purposes`, `payload_schema_for`, `is_valid_event_type`, `validate_event`, `validate_impression`, `new_event`, `new_impression` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
 | Health and outage control | `HealthServer`, `OutageBackoff` |
@@ -43,6 +44,18 @@ metric names stay in each owner repository through its classifier and observer a
 `process_message_with_retry` remains import-compatible during migration, but is deprecated.
 `max_retries` no longer starts an in-process retry loop: a failure is settled once for broker
 redelivery (or rejection), and the original handler exception remains visible to the caller.
+
+`AsyncBatchEngine` is optional application machinery for the two Discogs consumers only. After
+`submit`, it alone settles queued deliveries. The owner hive still supplies serialization,
+validation and normalization, database transactions through `BatchSink`, concrete exception
+classification, telemetry instruments and outcome mapping, control/completion state, QoS, and
+purge or maintenance policy. Transient failures retain original order without settlement;
+deterministic failures shrink toward `min_batch_size` and reject only at the poison threshold;
+bounded drain failure retains work for `run_periodic`.
+
+Consumers must pin an immutable commit revision containing these contracts rather than a moving
+branch. The revision is recorded by the release/merge commit and should be copied into each owner
+hive's dependency lock during its migration.
 
 ## Optional capabilities
 

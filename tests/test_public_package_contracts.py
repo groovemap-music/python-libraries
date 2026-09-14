@@ -14,11 +14,16 @@ from packaging.version import Version
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_EXPORTS = {
     "AliasRef",
+    "AsyncBatchEngine",
     "AsyncPostgreSQLPool",
     "AsyncResilientConnection",
     "AsyncResilientNeo4jDriver",
     "AsyncResilientPostgreSQL",
     "AsyncResilientRabbitMQ",
+    "BatchItemResult",
+    "BatchObserver",
+    "BatchPolicy",
+    "BatchSink",
     "CircuitBreaker",
     "CircuitBreakerConfig",
     "CircuitOpenError",
