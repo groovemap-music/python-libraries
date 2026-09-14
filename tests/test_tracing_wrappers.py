@@ -277,7 +277,7 @@ def test_a_message_without_context_starts_its_own_trace(spans: SpanCollector) ->
     assert consumer.parent is None
 
 
-def test_retries_produce_one_span_carrying_an_integer_attempt_count(spans: SpanCollector) -> None:
+def test_deprecated_wrapper_makes_one_attempt_and_one_span(spans: SpanCollector) -> None:
     attempts: list[int] = []
 
     async def handler(_received: Any) -> None:
@@ -285,13 +285,14 @@ def test_retries_produce_one_span_carrying_an_integer_attempt_count(spans: SpanC
         if len(attempts) < 3:
             raise ValueError("bad payload")
 
-    asyncio.run(process_message_with_retry(FakeMessage(), handler, backoff=NO_BACKOFF))
+    with pytest.raises(ValueError, match="bad payload"):
+        asyncio.run(process_message_with_retry(FakeMessage(), handler, backoff=NO_BACKOFF))
 
-    assert len(attempts) == 3
+    assert len(attempts) == 1
     span = spans.only("process discogs-releases")
     assert len(spans.spans()) == 1, "a retried message is still one delivery"
     retries = (span.attributes or {})[tracing.RETRY_COUNT_ATTRIBUTE]
-    assert retries == 2
+    assert retries == 1
     assert isinstance(retries, int) and not isinstance(retries, bool)
 
 
@@ -306,7 +307,7 @@ def test_an_exhausted_message_fails_its_span(spans: SpanCollector) -> None:
     span = spans.only("process discogs-releases")
     assert span.status.status_code is StatusCode.ERROR
     assert (span.attributes or {})["error.type"] == "ValueError"
-    assert (span.attributes or {})[tracing.RETRY_COUNT_ATTRIBUTE] == 2
+    assert (span.attributes or {})[tracing.RETRY_COUNT_ATTRIBUTE] == 1
     assert message.nacked
 
 
