@@ -25,6 +25,19 @@ if TYPE_CHECKING:
     )
     from common.errors import describe_exception
     from common.health_server import HealthServer
+    from common.identity import (
+        AliasRef,
+        alias_sources,
+        attach_aliases,
+        catalog_kinds,
+        entity_kinds,
+        is_valid_alias_source,
+        is_valid_entity_kind,
+        is_valid_provider,
+        new_id,
+        providers,
+        resolve_aliases,
+    )
     from common.media import (
         families_of,
         family_ids,
@@ -69,6 +82,17 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "resilient_connection": ("common.db_resilience", "resilient_connection"),
     "describe_exception": ("common.errors", "describe_exception"),
     "HealthServer": ("common.health_server", "HealthServer"),
+    "AliasRef": ("common.identity", "AliasRef"),
+    "alias_sources": ("common.identity", "alias_sources"),
+    "attach_aliases": ("common.identity", "attach_aliases"),
+    "catalog_kinds": ("common.identity", "catalog_kinds"),
+    "entity_kinds": ("common.identity", "entity_kinds"),
+    "is_valid_alias_source": ("common.identity", "is_valid_alias_source"),
+    "is_valid_entity_kind": ("common.identity", "is_valid_entity_kind"),
+    "is_valid_provider": ("common.identity", "is_valid_provider"),
+    "new_id": ("common.identity", "new_id"),
+    "providers": ("common.identity", "providers"),
+    "resolve_aliases": ("common.identity", "resolve_aliases"),
     "families_of": ("common.media", "families_of"),
     "family_ids": ("common.media", "family_ids"),
     "flatten_descriptions": ("common.media", "flatten_descriptions"),
