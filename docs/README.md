@@ -4,6 +4,7 @@
 - [Runtime API, configuration, telemetry, and resilient-resource ownership](runtime.md)
 - [Agent-tools public API](agent-tools.md)
 - [Compatibility and release policy](compatibility-and-releases.md)
+- [Coverage baseline and ratchet policy](coverage.md)
 - [Historical consumer compatibility and credential-removal evidence](consumer-compatibility.md)
 - [Publication-readiness attestation and current release gate](publication-readiness.md)
 - [Completed public-library cutover and dormant private-access compatibility](../private-package-auth.md)

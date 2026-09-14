@@ -1,11 +1,20 @@
 """Contract tests for public-consumer and credential-removal evidence."""
 
+import copy
 import json
+import runpy
+import tomllib
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = json.loads((ROOT / "docs/consumer-compatibility.json").read_text())
+PACKAGE_CONTRACT = runpy.run_path(ROOT / "scripts/verify-consumer-compatibility.py")["package_contract"]
+
+
+def _toml(path: Path) -> dict:
+    with path.open("rb") as file:
+        return tomllib.load(file)
 
 
 def test_consumer_matrix_has_exact_reviewed_scope() -> None:
@@ -22,6 +31,18 @@ def test_consumer_matrix_records_exact_package_revision() -> None:
     assert MATRIX["library"]["python"] == "3.14.5"
     assert MATRIX["verification"]["consumer_command"] == "just check"
     assert MATRIX["verification"]["result"] == "passed"
+
+
+def test_tool_only_coverage_policy_does_not_invalidate_package_evidence() -> None:
+    """Coverage settings do not alter either built distribution or its consumer contract."""
+    current = _toml(ROOT / "pyproject.toml")
+    tool_only_change = copy.deepcopy(current)
+    tool_only_change["tool"]["coverage"]["report"]["fail_under"] += 1
+    package_change = copy.deepcopy(current)
+    package_change["project"]["version"] = "999.0.0"
+
+    assert PACKAGE_CONTRACT(tool_only_change) == PACKAGE_CONTRACT(current)
+    assert PACKAGE_CONTRACT(package_change) != PACKAGE_CONTRACT(current)
 
 
 def test_historical_credential_removal_evidence_records_original_gate() -> None:
