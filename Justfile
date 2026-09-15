@@ -9,7 +9,7 @@ setup:
 # A clean checkout must provision the locked workspace before validation. In particular,
 # mypy follows imports into every supported optional integration, so validation needs the
 # same all-extras environment used by package and install checks.
-check: setup format-check lint typecheck test automation-check consumer-matrix-check publication-readiness-check media-taxonomy-check identity-vocabulary-check event-vocabulary-check build distribution-check install-check license-check secret-scan bump-preview
+check: setup format-check lint typecheck test automation-check consumer-matrix-check publication-readiness-check media-taxonomy-check identity-vocabulary-check event-vocabulary-check identifier-vocabulary-check company-role-vocabulary-check build distribution-check install-check license-check secret-scan bump-preview
 
 format:
     uv run ruff format .
@@ -76,6 +76,18 @@ identity-vocabulary-check:
 # ADR 0010 in the design repository.
 event-vocabulary-check:
     uv run python scripts/check-event-vocabulary.py
+
+# Fails if the vendored identifier vocabulary, schemas, or conformance fixtures drift from
+# the digests recorded in their source.json files, or if any file is missing. See ADR 0011
+# in the design repository.
+identifier-vocabulary-check:
+    uv run python scripts/check-identifier-vocabulary.py
+
+# Fails if the vendored company-role vocabulary, schemas, or conformance fixtures drift
+# from the digests recorded in their source.json files, or if any file is missing. See
+# ADR 0011 in the design repository.
+company-role-vocabulary-check:
+    uv run python scripts/check-company-role-vocabulary.py
 
 audit:
     uv run pip-audit

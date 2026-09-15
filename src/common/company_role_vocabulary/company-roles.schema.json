@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groovemap.music/schemas/company-roles-v1.json",
+  "title": "GrooveMap company-role vocabulary",
+  "description": "The closed role-category vocabulary and the raw Discogs company entity_type_name strings each category maps from (ADR 0011).",
+  "x-license": "MIT",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["vocabulary_version", "license", "unmapped_category", "role_categories", "discogs"],
+  "properties": {
+    "vocabulary_version": { "const": "1" },
+    "license": { "const": "MIT" },
+    "unmapped_category": { "const": "other" },
+    "role_categories": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "description"],
+        "properties": {
+          "id": { "$ref": "#/$defs/roleCategoryId" },
+          "label": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "discogs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["company_field", "excluded_field", "roles"],
+      "properties": {
+        "company_field": { "const": "companies" },
+        "excluded_field": { "const": "labels" },
+        "roles": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": { "$ref": "#/$defs/roleCategoryId" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "roleCategoryId": {
+      "enum": ["manufacturing", "mastering", "lacquer", "pressing", "distribution", "marketing", "rights", "recording_facility", "other"]
+    }
+  }
+}
