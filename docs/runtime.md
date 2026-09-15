@@ -18,6 +18,7 @@ from an implementation module, when a name appears here.
 | First-party events | `Event`, `Impression`, `EventValidationError`, `event_types`, `surfaces`, `consent_purposes`, `payload_schema_for`, `is_valid_event_type`, `validate_event`, `validate_impression`, `new_event`, `new_impression` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
 | Health and outage control | `HealthServer`, `OutageBackoff` |
+| Identifiers and company roles | `identifier_types`, `alias_identifier_types`, `company_role_categories`, `validate_identifiers_block`, `validate_companies_block`, `alias_refs_for_release`, `IdentifierValidationError` |
 | Media taxonomy | `map_discogs_formats`, `map_musicbrainz_release`, `legacy_format_names_to_media`, `flatten_descriptions`, `families_of`, `family_ids`, `medium_ids`, `medium_label` |
 | Native identity | `AliasRef`, `entity_kinds`, `catalog_kinds`, `providers`, `alias_sources`, `is_valid_entity_kind`, `is_valid_provider`, `is_valid_alias_source`, `new_id`, `resolve_aliases`, `attach_aliases` |
 | Neo4j | `AsyncResilientNeo4jDriver`, `ResilientNeo4jDriver`, `with_async_neo4j_retry`, `with_neo4j_retry` |
@@ -467,6 +468,47 @@ a failing test.
 `consent_purposes`. Both are columns of the landed `activity.impressions` table, the second
 `NOT NULL`, so a row cannot be written without them while the wire envelope leaves them to the
 writer. They are optional on the way in and always present in `to_row()`.
+
+## Identifier boundary
+
+[ADR 0011 in the `design`
+repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0011-catalog-identifiers-and-manufacturing-credits.md)
+adds two additive blocks to a release: `identifiers` carries every catalogue identifier a
+provider published, and `companies` carries the manufacturing and rights credits. Both
+vocabularies and both block schemas are vendored into this distribution as package data, and
+`common.identifiers` is the shared Python contract the two SQL loaders and `catalog-api` hold
+each other to.
+
+- `identifier_types()` and `company_role_categories()` return the closed version 1 sets as
+  tuples in vocabulary order — seven identifier types and nine role categories.
+  `alias_identifier_types()` is the subset of identifier types that mints a provider alias:
+  `barcode`, `catalog_number`, and `matrix_runout`, minting into the `barcode`,
+  `catalog_number`, and `matrix` provider namespaces respectively. Every other type is evidence
+  carried on the block: a label code or a rights society identifies an organisation rather than
+  the release, and an ASIN names a retailer's listing rather than the edition.
+- `validate_identifiers_block(block)` and `validate_companies_block(block)` check a decoded
+  block against the published contract and raise `IdentifierValidationError` naming the first
+  field that failed, with its path inside the block such as `items[1].source.field`.
+- `alias_refs_for_release(block, entity_kind="release")` returns the `AliasRef` list an
+  identifiers block mints, ready to pass to `attach_aliases` with the native id the release
+  resolved to. The block is validated first, so aliases cannot be minted out of a malformed
+  block.
+
+The alias value is normalized once, here, as the vocabulary's `alias_namespaces` declare it: a
+barcode keeps its ASCII digits only, so printed grouping spaces and hyphens do not change
+identity; a catalogue number is trimmed, has every run of whitespace collapsed to one space, and
+is upper-cased, which is how labels print the same number two ways; and a matrix inscription is
+trimmed and collapsed but keeps its case, because the characters stamped into the disc are the
+evidence. Two items that normalize alike are one ref, and a value that normalizes away to
+nothing mints no alias rather than an empty key. Refs keep the block's item order.
+
+The validation is the standard library only, so no schema library enters this distribution's
+base dependencies and a consumer pinned to an older lockfile keeps resolving. What keeps it
+honest is `tests/test_identifiers.py`, which validates all twenty vendored design fixtures — and
+a generated mutation of each, covering every structural rule the schemas carry — against the
+vendored JSON Schemas with `jsonschema`, a development dependency, and asserts the
+standard-library validators return the same verdict every time. The Python contract therefore
+cannot drift from the published schema without a failing test.
 
 ## Compatibility boundary
 
