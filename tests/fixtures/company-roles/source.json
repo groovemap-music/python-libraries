@@ -1,0 +1,56 @@
+{
+  "repository": "groovemap-music/design",
+  "commit": "d06e1571f6acce6a246e4c0b6be866ecbea44c72",
+  "files": [
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-company-catalogue-number.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-company-catalogue-number.json",
+      "sha256": "96da58233c5a25dc5493606cbd8d6fbc5cfa5bec3cc6408daf885047e8dab545"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-distribution-and-marketing.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-distribution-and-marketing.json",
+      "sha256": "1bb862cc4daefa443fe07b8e6573031d8fd0417664764c378ad2cdcbc292fdbc"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-issuing-label-excluded.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-issuing-label-excluded.json",
+      "sha256": "abb77c38fcc2b450fd4260af449980dd1b65d01803950c05f2cf845dcafe5368"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-malformed-entries.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-malformed-entries.json",
+      "sha256": "a9b586b87be499e1d69ecece87d499e0506a5141cc7def9f910fc7b1ba3fd76d"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-manufacturing-and-print.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-manufacturing-and-print.json",
+      "sha256": "6b4cfae155990aca7f5f1dd952d0e3977730b4e417071b4b97e603fbe5b4d830"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-no-companies.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-no-companies.json",
+      "sha256": "f0973bdc76f9f1db4bf5b4bdf4b1c7caaac969c8df65484c6a6e824bf4da9887"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-pressing-and-transfer-master.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-pressing-and-transfer-master.json",
+      "sha256": "514e2400659e99afe2a8e8c5f12c4cedba5393b010dd86a4c379850825ec2c5d"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-recording-facilities.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-recording-facilities.json",
+      "sha256": "21c4874c859b7ffc991549e7c29a2d7c14ff21d87e9a174359781cdae440094f"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-rights-holders.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-rights-holders.json",
+      "sha256": "68ec0979c7a768cfeffb01409e0e0f8659f83ac691d93190e6f8f7cdcc1c67b1"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/fixtures/discogs-unmapped-role.json",
+      "vendored_as": "tests/fixtures/company-roles/discogs-unmapped-role.json",
+      "sha256": "970cddcbcea2019b436babda87a43b9b45b725f5e97ed29528896e00c7758ee4"
+    }
+  ]
+}

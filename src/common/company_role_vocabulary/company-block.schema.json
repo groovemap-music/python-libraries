@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groovemap.music/schemas/company-block-v1.json",
+  "title": "GrooveMap canonical companies block",
+  "description": "The additive companies object a producer attaches to a releases event before the content hash, and that the graph projects as CREDITED_TO edges (ADR 0011).",
+  "x-license": "MIT",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["companies_version", "items", "role_categories", "unmapped"],
+  "properties": {
+    "companies_version": { "const": "1" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "discogs_id", "role", "role_category", "catno", "source"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "discogs_id": { "type": ["integer", "null"], "minimum": 1 },
+          "role": { "type": "string", "minLength": 1 },
+          "role_category": { "$ref": "#/$defs/roleCategoryId" },
+          "catno": { "type": ["string", "null"], "minLength": 1 },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["provider", "entity_type"],
+            "properties": {
+              "provider": { "const": "discogs" },
+              "entity_type": { "type": ["string", "null"], "pattern": "^[0-9]+$" }
+            }
+          }
+        }
+      }
+    },
+    "role_categories": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/roleCategoryId" }
+    },
+    "unmapped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roles"],
+      "properties": {
+        "roles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "roleCategoryId": {
+      "enum": ["manufacturing", "mastering", "lacquer", "pressing", "distribution", "marketing", "rights", "recording_facility", "other"]
+    }
+  }
+}

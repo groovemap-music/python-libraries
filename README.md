@@ -130,6 +130,47 @@ To re-vendor after an upstream change: copy every changed file from the reviewed
 commit, recompute each digest (`shasum -a 256 <file>`), and update the relevant `source.json`'s
 `commit` and per-file `sha256` fields to match.
 
+## Vendored identifier vocabulary
+
+`groovemap-runtime` ships the canonical identifier vocabulary and block schema that [ADR 0011
+in the `design`
+repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0011-catalog-identifiers-and-manufacturing-credits.md)
+makes authoritative for every GrooveMap service.
+`src/common/identifier_vocabulary/identifier-types.json`, `identifier-types.schema.json`, and
+`identifier-block.schema.json` are vendored verbatim, byte for byte, from
+`taxonomy/identifiers/v1/` in the `design` repository; they ship as package data inside the
+`groovemap-runtime` wheel and are not edited in this repository.
+`src/common/identifier_vocabulary/source.json` beside them records the source commit and, per
+vendored file, its path and SHA-256 digest. The conformance fixtures under
+`taxonomy/identifiers/v1/fixtures/` at the same commit are vendored the same way into
+`tests/fixtures/identifiers/`, with their own `source.json`. `just check` runs
+`scripts/check-identifier-vocabulary.py`, which recomputes every recorded digest across both
+`source.json` files and fails if any differs or if any file is missing — a drift means a
+vendored copy is stale.
+
+To re-vendor after an upstream change: copy every changed file from the reviewed `design`
+commit, recompute each digest (`shasum -a 256 <file>`), and update the relevant `source.json`'s
+`commit` and per-file `sha256` fields to match.
+
+## Vendored company-role vocabulary
+
+`groovemap-runtime` ships the canonical company-role vocabulary and block schema that the same
+ADR 0011 makes authoritative. `src/common/company_role_vocabulary/company-roles.json`,
+`company-roles.schema.json`, and `company-block.schema.json` are vendored verbatim, byte for
+byte, from `taxonomy/company-roles/v1/` in the `design` repository; they ship as package data
+inside the `groovemap-runtime` wheel and are not edited in this repository.
+`src/common/company_role_vocabulary/source.json` beside them records the source commit and, per
+vendored file, its path and SHA-256 digest. The conformance fixtures under
+`taxonomy/company-roles/v1/fixtures/` at the same commit are vendored the same way into
+`tests/fixtures/company-roles/`, with their own `source.json`. `just check` runs
+`scripts/check-company-role-vocabulary.py`, which recomputes every recorded digest across both
+`source.json` files and fails if any differs or if any file is missing — a drift means a
+vendored copy is stale.
+
+To re-vendor after an upstream change: copy every changed file from the reviewed `design`
+commit, recompute each digest (`shasum -a 256 <file>`), and update the relevant `source.json`'s
+`commit` and per-file `sha256` fields to match.
+
 ## License and history
 
 The current tree is licensed under the [MIT License](LICENSE). Its relevant source history was

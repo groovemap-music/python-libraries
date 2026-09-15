@@ -1,0 +1,21 @@
+{
+  "repository": "groovemap-music/design",
+  "commit": "d06e1571f6acce6a246e4c0b6be866ecbea44c72",
+  "files": [
+    {
+      "path": "taxonomy/identifiers/v1/identifier-types.json",
+      "vendored_as": "src/common/identifier_vocabulary/identifier-types.json",
+      "sha256": "2df8a691173f779b2d2076f31e8abd01d160e51f4f371de99f1f8e1cb12f26a5"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/identifier-types.schema.json",
+      "vendored_as": "src/common/identifier_vocabulary/identifier-types.schema.json",
+      "sha256": "3cc2d575e8b3ed446d868bac3ae17c150d584973d24e7adc3998cc2aacf5fde5"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/identifier-block.schema.json",
+      "vendored_as": "src/common/identifier_vocabulary/identifier-block.schema.json",
+      "sha256": "0408beef9f9c40d308ec70f5f1f04857ccfd8787a1007df08cdfbac7307e25ee"
+    }
+  ]
+}
