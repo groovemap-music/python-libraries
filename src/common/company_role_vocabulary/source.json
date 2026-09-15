@@ -1,0 +1,21 @@
+{
+  "repository": "groovemap-music/design",
+  "commit": "d06e1571f6acce6a246e4c0b6be866ecbea44c72",
+  "files": [
+    {
+      "path": "taxonomy/company-roles/v1/company-roles.json",
+      "vendored_as": "src/common/company_role_vocabulary/company-roles.json",
+      "sha256": "03ab8689ba14768dceffb756a71475c01797caea8d18ba9943cd5f69b3d705de"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/company-roles.schema.json",
+      "vendored_as": "src/common/company_role_vocabulary/company-roles.schema.json",
+      "sha256": "134a2c688f4d9923e2b172fab2e19c9ec5ec45cb946ee7a18fccc4a233da5494"
+    },
+    {
+      "path": "taxonomy/company-roles/v1/company-block.schema.json",
+      "vendored_as": "src/common/company_role_vocabulary/company-block.schema.json",
+      "sha256": "749d57cf3686c590d06e75c47e37ba2de1d0b8a2ef189aa422351a5f2286fe0c"
+    }
+  ]
+}

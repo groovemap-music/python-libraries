@@ -1,0 +1,56 @@
+{
+  "repository": "groovemap-music/design",
+  "commit": "d06e1571f6acce6a246e4c0b6be866ecbea44c72",
+  "files": [
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-absent-catalogue-number.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-absent-catalogue-number.json",
+      "sha256": "f693e75c1fc0a261bec3db57aed0e2ca22c300d8b4289a1f4221a0c99e4c9952"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-asin-and-isrc.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-asin-and-isrc.json",
+      "sha256": "7c24cca5d03145b4b1da0bd62e531184eb64ed4cb6cc16b0fc37a7dc081b24bc"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-barcode-and-catalogue-number.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-barcode-and-catalogue-number.json",
+      "sha256": "48e54d0b8001e4aa4b1359dd817d95b858bc9bdc860993cbd45fe208253fc76f"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-duplicate-alias-values.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-duplicate-alias-values.json",
+      "sha256": "bcc1aa96d73606ede98b1465b50710ef8756218322eee7b2497e46c2b6e526be"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-label-code-and-rights-society.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-label-code-and-rights-society.json",
+      "sha256": "83a8eea2ee337cf3165de32b3a9181397f9e8e2ae589020f8bfde066223fd021"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-malformed-entries.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-malformed-entries.json",
+      "sha256": "42bc1e49f704a6593015887076f0821013a1bd543a31053549101d09cd644e84"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-mapped-to-other.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-mapped-to-other.json",
+      "sha256": "b244d7d2ba4179dcbc6d4a9c41af431d0f784d36090d27a4f351ebd25acc444b"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-matrix-runout-inscriptions.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-matrix-runout-inscriptions.json",
+      "sha256": "678f1258aa45146bfb0b6b320e42fc9286fd76373145a041f798341a0bc6facc"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-no-identifiers.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-no-identifiers.json",
+      "sha256": "0c1170981650ecc6d275176997ad419a01ca2d628786f2b9ee6117644b82d44c"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/discogs-unmapped-type.json",
+      "vendored_as": "tests/fixtures/identifiers/discogs-unmapped-type.json",
+      "sha256": "90a80b95975f34d8f74e56ebbddbcd943db9d2b6f5221f7030479da3be85c71b"
+    }
+  ]
+}

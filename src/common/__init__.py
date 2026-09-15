@@ -41,6 +41,15 @@ if TYPE_CHECKING:
         validate_impression,
     )
     from common.health_server import HealthServer
+    from common.identifiers import (
+        IdentifierValidationError,
+        alias_identifier_types,
+        alias_refs_for_release,
+        company_role_categories,
+        identifier_types,
+        validate_companies_block,
+        validate_identifiers_block,
+    )
     from common.identity import (
         AliasRef,
         alias_sources,
@@ -122,6 +131,13 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "validate_event": ("common.events", "validate_event"),
     "validate_impression": ("common.events", "validate_impression"),
     "HealthServer": ("common.health_server", "HealthServer"),
+    "IdentifierValidationError": ("common.identifiers", "IdentifierValidationError"),
+    "alias_identifier_types": ("common.identifiers", "alias_identifier_types"),
+    "alias_refs_for_release": ("common.identifiers", "alias_refs_for_release"),
+    "company_role_categories": ("common.identifiers", "company_role_categories"),
+    "identifier_types": ("common.identifiers", "identifier_types"),
+    "validate_companies_block": ("common.identifiers", "validate_companies_block"),
+    "validate_identifiers_block": ("common.identifiers", "validate_identifiers_block"),
     "AliasRef": ("common.identity", "AliasRef"),
     "alias_sources": ("common.identity", "alias_sources"),
     "attach_aliases": ("common.identity", "attach_aliases"),
