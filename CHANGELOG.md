@@ -7,6 +7,16 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Add `common.identifiers`, the shared catalog-identifier and company-role helpers of
+  ADR 0011: `identifier_types`, `alias_identifier_types`, `company_role_categories`,
+  `validate_identifiers_block`, `validate_companies_block`, `alias_refs_for_release`, and
+  `IdentifierValidationError`, proved against the design repository's conformance
+  fixtures.
+- Vendor the identifier vocabulary and company-role vocabulary, with schemas and fixtures,
+  into `groovemap-runtime` as package data from the design repository at commit
+  `d06e1571f6acce6a246e4c0b6be866ecbea44c72`, with digest checks
+  (`identifier-types.json` `2df8a691173f779b2d2076f31e8abd01d160e51f4f371de99f1f8e1cb12f26a5`,
+  `company-roles.json` `03ab8689ba14768dceffb756a71475c01797caea8d18ba9943cd5f69b3d705de`).
 - Add `common.identity`, the shared native-identity helpers of ADR 0009: `entity_kinds`,
   `catalog_kinds`, `providers`, `alias_sources`, the `is_valid_*` predicates, `new_id`,
   `AliasRef`, `resolve_aliases`, and `attach_aliases`, proved against the design
