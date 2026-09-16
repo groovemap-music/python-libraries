@@ -24,9 +24,12 @@
             "additionalProperties": false,
             "required": ["provider", "type", "field"],
             "properties": {
-              "provider": { "const": "discogs" },
+              "provider": { "enum": ["discogs", "musicbrainz"] },
               "type": { "type": ["string", "null"], "minLength": 1 },
-              "field": { "enum": ["identifiers", "labels[].catno"] }
+              "field": {
+                "description": "The upstream field an item's value was read from. `identifiers` and `labels[].catno` are Discogs release resource fields; `barcode` and `label-info[].catalog-number` are the corresponding fields on a MusicBrainz release resource (ws/2/release), each carrying at most one identifier per release rather than a typed list.",
+                "enum": ["identifiers", "labels[].catno", "barcode", "label-info[].catalog-number"]
+              }
             }
           }
         }

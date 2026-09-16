@@ -190,7 +190,10 @@ class TestVendoredVocabularies:
         assert set(company_schema["$defs"]["roleCategoryId"]["enum"]) == set(company_role_categories())
         assert identifier_schema["properties"]["identifiers_version"]["const"] == "1"
         assert company_schema["properties"]["companies_version"]["const"] == "1"
-        assert identifier_schema["properties"]["items"]["items"]["properties"]["source"]["properties"]["provider"]["const"] == "discogs"
+        assert identifier_schema["properties"]["items"]["items"]["properties"]["source"]["properties"]["provider"]["enum"] == [
+            "discogs",
+            "musicbrainz",
+        ]
         assert company_schema["properties"]["items"]["items"]["properties"]["source"]["properties"]["provider"]["const"] == "discogs"
 
     def test_the_unmapped_marker_is_the_type_and_category_the_vocabularies_fall_back_to(self) -> None:

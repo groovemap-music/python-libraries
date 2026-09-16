@@ -11,6 +11,7 @@
   "surfaces": [
     { "id": "search", "label": "Search", "description": "Catalog search and its result lists." },
     { "id": "recommendation", "label": "Recommendation", "description": "Ranked recommendations and the outcomes of showing them." },
+    { "id": "fit", "label": "Fit", "description": "Ranked fit suggestions and the outcomes of showing them." },
     { "id": "collection", "label": "Collection", "description": "A user's own collection." },
     { "id": "wantlist", "label": "Wantlist", "description": "A user's wantlist." },
     { "id": "consent", "label": "Consent", "description": "Per-purpose consent grants and revocations." },
@@ -71,6 +72,46 @@
       "verb": "hidden",
       "schema_version": 1,
       "description": "A user hid a shown recommendation from future lists.",
+      "payload_schema": "#/$defs/impression_outcome"
+    },
+    {
+      "id": "fit.shown",
+      "surface": "fit",
+      "verb": "shown",
+      "schema_version": 1,
+      "description": "A ranked fit suggestion list was shown to a user.",
+      "payload_schema": "#/$defs/fit_shown"
+    },
+    {
+      "id": "fit.opened",
+      "surface": "fit",
+      "verb": "opened",
+      "schema_version": 1,
+      "description": "A user opened a shown fit suggestion.",
+      "payload_schema": "#/$defs/impression_outcome"
+    },
+    {
+      "id": "fit.saved",
+      "surface": "fit",
+      "verb": "saved",
+      "schema_version": 1,
+      "description": "A user saved a shown fit suggestion.",
+      "payload_schema": "#/$defs/impression_outcome"
+    },
+    {
+      "id": "fit.dismissed",
+      "surface": "fit",
+      "verb": "dismissed",
+      "schema_version": 1,
+      "description": "A user dismissed a shown fit suggestion.",
+      "payload_schema": "#/$defs/impression_outcome"
+    },
+    {
+      "id": "fit.hidden",
+      "surface": "fit",
+      "verb": "hidden",
+      "schema_version": 1,
+      "description": "A user hid a shown fit suggestion from future lists.",
       "payload_schema": "#/$defs/impression_outcome"
     },
     {
@@ -187,6 +228,17 @@
       "properties": {
         "impression_id": { "$ref": "#/$defs/uuid" },
         "item_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "fit_shown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["impression_id", "candidate_set_id", "policy_id", "item_count"],
+      "properties": {
+        "impression_id": { "$ref": "#/$defs/uuid" },
+        "candidate_set_id": { "$ref": "#/$defs/uuid" },
+        "policy_id": { "type": "string", "minLength": 1 },
+        "item_count": { "type": "integer", "minimum": 1 }
       }
     },
     "collection_item_change": {

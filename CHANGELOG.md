@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Re-vendor the event vocabulary and identifier vocabulary from the design repository at
+  commit `5bfdf1005c5d95c99143e8c2acd189e127e1cb10`, which publishes the `fit` surface and
+  its five outcome event types (`fit.shown`, `fit.opened`, `fit.saved`, `fit.dismissed`,
+  `fit.hidden`) and admits MusicBrainz as an identifier source, with digest checks
+  (`event-types.json` `920a63d1eda5e909e6d6bd4850df005a17e592fbfc6f8f3152a15833f74fa8ad`,
+  `identifier-types.json` `87b844a20f35d45e7ba176df58d6ccf3d7bc88beecda90457b1a2afb3432fb34`).
+  `common.events.surfaces()` and `common.events.event_types()` now expose the `fit` surface
+  and its event types.
 - Add `common.identifiers`, the shared catalog-identifier and company-role helpers of
   ADR 0011: `identifier_types`, `alias_identifier_types`, `company_role_categories`,
   `validate_identifiers_block`, `validate_companies_block`, `alias_refs_for_release`, and

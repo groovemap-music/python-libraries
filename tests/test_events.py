@@ -80,16 +80,28 @@ def valid_impression_document() -> dict[str, Any]:
 
 
 class TestVocabulary:
-    def test_version_1_carries_exactly_the_sixteen_published_types(self) -> None:
-        assert len(event_types()) == 16
+    def test_version_1_carries_exactly_the_twenty_one_published_types(self) -> None:
+        assert len(event_types()) == 21
         assert event_types()[0] == "search.query"
         assert "recommendation.hidden" in event_types()
         assert is_valid_event_type("account.erasure_requested")
         assert not is_valid_event_type("search.exploded")
 
     def test_every_type_names_a_surface_the_vocabulary_carries(self) -> None:
-        assert surfaces() == ("search", "recommendation", "collection", "wantlist", "consent", "account")
+        assert surfaces() == ("search", "recommendation", "fit", "collection", "wantlist", "consent", "account")
         assert all(event_type.split(".")[0] in surfaces() for event_type in event_types())
+
+    def test_fit_is_a_vendored_surface_with_its_outcome_event_types(self) -> None:
+        assert "fit" in surfaces()
+        assert {event_type for event_type in event_types() if event_type.startswith("fit.")} == {
+            "fit.shown",
+            "fit.opened",
+            "fit.saved",
+            "fit.dismissed",
+            "fit.hidden",
+        }
+        for event_type in ("fit.shown", "fit.opened", "fit.saved", "fit.dismissed", "fit.hidden"):
+            assert is_valid_event_type(event_type)
 
     def test_consent_is_granted_for_exactly_two_purposes(self) -> None:
         assert consent_purposes() == ("product_analytics", "model_training")
