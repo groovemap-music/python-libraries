@@ -19,24 +19,56 @@ jobs:
       language: python
       setup-command: |
         just setup
-        docker run --detach --rm \
-          --name python-libraries-rabbitmq \
-          --publish 5672:5672 \
-          --publish 15672:15672 \
-          --env RABBITMQ_DEFAULT_USER=groovemap \
-          --env RABBITMQ_DEFAULT_PASS=groovemap \
-          --env "RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbitmq_management disable_management_stats false" \
-          rabbitmq:4-management@sha256:ffd1b50c522ad20172ffd6716a2f41db375c7269560c8f3fb9a694e210ef0852
-        for attempt in {1..30}; do
-          if docker exec python-libraries-rabbitmq rabbitmq-diagnostics -q ping; then
+
+        rabbitmq_max_start_attempts=3
+        rabbitmq_max_ping_attempts=30
+
+        start_rabbitmq() {
+          docker rm -f -v python-libraries-rabbitmq >/dev/null 2>&1 || true
+          docker run --detach \
+            --name python-libraries-rabbitmq \
+            --hostname python-libraries-rabbitmq \
+            --publish 5672:5672 \
+            --publish 15672:15672 \
+            --env RABBITMQ_DEFAULT_USER=groovemap \
+            --env RABBITMQ_DEFAULT_PASS=groovemap \
+            --env "RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbitmq_management disable_management_stats false" \
+            rabbitmq:4-management@sha256:ffd1b50c522ad20172ffd6716a2f41db375c7269560c8f3fb9a694e210ef0852
+        }
+
+        wait_for_rabbitmq() {
+          for attempt in $(seq 1 "${rabbitmq_max_ping_attempts}"); do
+            container_status="$(docker inspect --format '{{.State.Status}}' python-libraries-rabbitmq 2>/dev/null || echo missing)"
+            if [[ "${container_status}" != "running" ]]; then
+              echo "::warning::python-libraries-rabbitmq is '${container_status}' (ping attempt ${attempt}/${rabbitmq_max_ping_attempts}); broker exited before answering ping"
+              return 1
+            fi
+            if docker exec python-libraries-rabbitmq rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+              return 0
+            fi
+            sleep 2
+          done
+          echo "::warning::python-libraries-rabbitmq did not answer ping after ${rabbitmq_max_ping_attempts} attempts"
+          return 1
+        }
+
+        rabbitmq_ready=false
+        for start_attempt in $(seq 1 "${rabbitmq_max_start_attempts}"); do
+          start_rabbitmq
+          if wait_for_rabbitmq; then
+            rabbitmq_ready=true
             break
           fi
-          if [[ "${attempt}" == "30" ]]; then
-            docker logs python-libraries-rabbitmq
-            exit 1
-          fi
+          echo "::warning::rabbitmq start attempt ${start_attempt}/${rabbitmq_max_start_attempts} failed"
           sleep 2
         done
+
+        if [[ "${rabbitmq_ready}" != "true" ]]; then
+          echo "::error::python-libraries-rabbitmq failed to become ready after ${rabbitmq_max_start_attempts} start attempts"
+          docker logs python-libraries-rabbitmq 2>&1 || echo "::error::no logs available for python-libraries-rabbitmq; the container was removed"
+          exit 1
+        fi
+
         {
           echo "RABBITMQ_HOST=127.0.0.1"
           echo "RABBITMQ_USERNAME=groovemap"
