@@ -7,6 +7,12 @@ updates:
       day: monday
     labels: [dependencies, github-actions]
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+      github-actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: uv
     directories: [/, /agent-tools]
     schedule:
@@ -14,3 +20,9 @@ updates:
       day: monday
     labels: [dependencies, python]
     open-pull-requests-limit: 10
+    groups:
+      python:
+        patterns: ["*"]
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
