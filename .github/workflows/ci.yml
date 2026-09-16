@@ -28,6 +28,7 @@ jobs:
           docker run --detach \
             --name python-libraries-rabbitmq \
             --hostname python-libraries-rabbitmq \
+            --user rabbitmq \
             --publish 5672:5672 \
             --publish 15672:15672 \
             --env RABBITMQ_DEFAULT_USER=groovemap \
