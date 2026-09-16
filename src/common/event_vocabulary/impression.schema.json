@@ -33,7 +33,7 @@
     "occurred_at": { "$ref": "#/$defs/timestamp" }
   },
   "$defs": {
-    "surfaceId": { "enum": ["search", "recommendation", "collection", "wantlist", "consent", "account"] },
+    "surfaceId": { "enum": ["search", "recommendation", "fit", "collection", "wantlist", "consent", "account"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "uuid": { "type": "string", "format": "uuid" }
   }

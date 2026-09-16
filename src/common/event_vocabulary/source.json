@@ -1,21 +1,21 @@
 {
   "repository": "groovemap-music/design",
-  "commit": "14aa2d70dded6b0854569cc4909afc5ae4ebe03f",
+  "commit": "5bfdf1005c5d95c99143e8c2acd189e127e1cb10",
   "files": [
     {
       "path": "taxonomy/events/v1/event-types.json",
       "vendored_as": "src/common/event_vocabulary/event-types.json",
-      "sha256": "f64f03164c208477e8ae9c6bc547bba7342f23df96f6b10f21f7fa6f1d21ba74"
+      "sha256": "920a63d1eda5e909e6d6bd4850df005a17e592fbfc6f8f3152a15833f74fa8ad"
     },
     {
       "path": "taxonomy/events/v1/event-envelope.schema.json",
       "vendored_as": "src/common/event_vocabulary/event-envelope.schema.json",
-      "sha256": "3dc6d525db6fc517711e92bffab3cadd64ef36f5154c75110bd19a3a41a4faed"
+      "sha256": "c9ac92b682faeb21c14d7fb93300f8a680edc56848c188d4693114138e401bb0"
     },
     {
       "path": "taxonomy/events/v1/impression.schema.json",
       "vendored_as": "src/common/event_vocabulary/impression.schema.json",
-      "sha256": "e31fff8f9fe99c33056b90b0b9841dfb33b66d5b3b9c8e48edad8dfba1f82bf9"
+      "sha256": "117544abf6218c26b847b2c9c4700f5a8865963f2f2a6e8436f8eb2e4505173e"
     }
   ]
 }

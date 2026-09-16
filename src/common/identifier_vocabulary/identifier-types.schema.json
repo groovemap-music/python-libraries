@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://groovemap.music/schemas/identifier-types-v1.json",
   "title": "GrooveMap catalog identifier vocabulary",
-  "description": "The closed identifier-type vocabulary, the alias namespaces it mints provider aliases for, and the raw Discogs type strings each type maps from (ADR 0011).",
+  "description": "The closed identifier-type vocabulary, the alias namespaces it mints provider aliases for, and the raw Discogs and MusicBrainz strings each type maps from (ADR 0011).",
   "x-license": "MIT",
   "type": "object",
   "additionalProperties": false,
-  "required": ["vocabulary_version", "license", "unmapped_type", "identifier_types", "alias_namespaces", "normalizations", "discogs"],
+  "required": ["vocabulary_version", "license", "unmapped_type", "identifier_types", "alias_namespaces", "normalizations", "discogs", "musicbrainz"],
   "properties": {
     "vocabulary_version": { "const": "1" },
     "license": { "const": "MIT" },
@@ -71,6 +71,21 @@
         "identifier_field": { "const": "identifiers" },
         "catalog_number_field": { "const": "labels[].catno" },
         "absent_catalog_number": { "const": "none" },
+        "types": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": { "$ref": "#/$defs/identifierTypeId" }
+        }
+      }
+    },
+    "musicbrainz": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["barcode_field", "catalog_number_field", "types"],
+      "properties": {
+        "barcode_field": { "const": "barcode" },
+        "catalog_number_field": { "const": "label-info[].catalog-number" },
         "types": {
           "type": "object",
           "minProperties": 1,
