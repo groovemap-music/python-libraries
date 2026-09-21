@@ -57,6 +57,15 @@ def expected_block(directory: str, name: str) -> dict[str, Any]:
     return block
 
 
+def musicbrainz_identifiers_block() -> dict[str, Any]:
+    """Build a MusicBrainz-shaped block without changing the published Discogs fixtures."""
+    block = expected_block("identifiers", "discogs-barcode-and-catalogue-number")
+    block["items"][0]["source"] = {"provider": "musicbrainz", "type": None, "field": "barcode"}
+    block["items"][1]["source"] = {"provider": "musicbrainz", "type": None, "field": "label-info[].catalog-number"}
+    block["items"][1]["value"] = "  pb   41447  "
+    return block
+
+
 def schema_for(kind: str) -> dict[str, Any]:
     directory = IDENTIFIER_VOCABULARY_DIRECTORY if kind == IDENTIFIERS else COMPANY_VOCABULARY_DIRECTORY
     resource = "identifier-block.schema.json" if kind == IDENTIFIERS else "company-block.schema.json"
@@ -206,6 +215,58 @@ class TestVendoredVocabularies:
 
 
 class TestConformance:
+    def test_musicbrainz_block_agrees_with_schema_and_mints_normalized_aliases(self) -> None:
+        block = musicbrainz_identifiers_block()
+
+        assert_validators_agree(IDENTIFIERS, block, "musicbrainz identifiers")
+        validate_identifiers_block(block)
+        assert alias_refs_for_release(block) == [
+            AliasRef("barcode", "release", "5012394144777"),
+            AliasRef("catalog_number", "release", "PB 41447"),
+        ]
+
+    @pytest.mark.parametrize(
+        ("change", "path"),
+        [
+            ("unknown-provider", "items[0].source.provider"),
+            ("malformed-provider", "items[0].source.provider"),
+            ("unknown-field", "items[1].source.field"),
+            ("malformed-field", "items[1].source.field"),
+            ("missing-source-field", "items[0].source.field"),
+            ("malformed-block", "items[0].value"),
+        ],
+    )
+    def test_invalid_musicbrainz_blocks_agree_with_schema_and_name_field(self, change: str, path: str) -> None:
+        block = musicbrainz_identifiers_block()
+        if change == "unknown-provider":
+            block["items"][0]["source"]["provider"] = "unknown"
+        elif change == "malformed-provider":
+            block["items"][0]["source"]["provider"] = None
+        elif change == "unknown-field":
+            block["items"][1]["source"]["field"] = "label-info[].catno"
+        elif change == "malformed-field":
+            block["items"][1]["source"]["field"] = None
+        elif change == "missing-source-field":
+            del block["items"][0]["source"]["field"]
+        else:
+            block["items"][0]["value"] = ""
+
+        assert_validators_agree(IDENTIFIERS, block, change)
+        with pytest.raises(IdentifierValidationError) as failure:
+            validate_identifiers_block(block)
+        assert failure.value.field == path
+        with pytest.raises(IdentifierValidationError):
+            alias_refs_for_release(block)
+
+    def test_company_block_remains_discogs_only(self) -> None:
+        block = expected_block("company-roles", "discogs-rights-holders")
+        block["items"][0]["source"]["provider"] = "musicbrainz"
+
+        assert_validators_agree(COMPANIES, block, "musicbrainz company source")
+        with pytest.raises(IdentifierValidationError) as failure:
+            validate_companies_block(block)
+        assert failure.value.field == "items[0].source.provider"
+
     def test_the_vendored_fixture_set_is_the_published_one(self) -> None:
         assert len(IDENTIFIER_FIXTURES) == 10
         assert len(COMPANY_FIXTURES) == 10

@@ -65,7 +65,7 @@ _COMPANY_BLOCK_SCHEMA_RESOURCE: Final = "company-block.schema.json"
 # not fail on a changed one; `tests/test_identifiers.py` asserts each still matches the schema.
 _IDENTIFIERS_VERSION: Final = "1"
 _COMPANIES_VERSION: Final = "1"
-_SOURCE_PROVIDER: Final = "discogs"
+_COMPANY_SOURCE_PROVIDER: Final = "discogs"
 
 # `entity_type` is a Discogs numeric id carried as a string. The schema spells the constraint
 # `^[0-9]+$`; a full match is the same rule without Python's trailing-newline allowance for `$`.
@@ -233,6 +233,12 @@ def _source_fields() -> tuple[str, ...]:
     return tuple(_identifier_block_schema()["properties"]["items"]["items"]["properties"]["source"]["properties"]["field"]["enum"])
 
 
+@cache
+def _identifier_source_providers() -> tuple[str, ...]:
+    """Return the identifier source providers admitted by the published block schema."""
+    return tuple(_identifier_block_schema()["properties"]["items"]["items"]["properties"]["source"]["properties"]["provider"]["enum"])
+
+
 def _require_object(field_name: str, value: Any, contract: tuple[tuple[str, ...], frozenset[str]]) -> Mapping[str, Any]:
     """Enforce one closed schema object: its type, its required set, and its admitted names."""
     if not isinstance(value, dict):
@@ -337,7 +343,7 @@ def validate_identifiers_block(block: Mapping[str, Any]) -> None:
 
         source_path = f"{path}.source"
         source = _require_object(source_path, entry["source"], contracts["source"])
-        _require_const(f"{source_path}.provider", source["provider"], _SOURCE_PROVIDER)
+        _require_enum(f"{source_path}.provider", source["provider"], _identifier_source_providers())
         _require_nullable_text(f"{source_path}.type", source["type"])
         _require_enum(f"{source_path}.field", source["field"], _source_fields())
 
@@ -381,7 +387,7 @@ def validate_companies_block(block: Mapping[str, Any]) -> None:
 
         source_path = f"{path}.source"
         source = _require_object(source_path, entry["source"], contracts["source"])
-        _require_const(f"{source_path}.provider", source["provider"], _SOURCE_PROVIDER)
+        _require_const(f"{source_path}.provider", source["provider"], _COMPANY_SOURCE_PROVIDER)
         _require_nullable_entity_type(f"{source_path}.entity_type", source["entity_type"])
 
     for index, value in enumerate(_require_array("role_categories", document["role_categories"], unique=True)):
