@@ -7,6 +7,9 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Accept schema-valid MusicBrainz identifier sources in `common.identifiers`, including
+  `barcode` and `label-info[].catalog-number`, while keeping company sources Discogs-only.
+  MusicBrainz barcode and catalogue-number items mint the same normalized alias namespaces.
 - Re-vendor the event vocabulary and identifier vocabulary from the design repository at
   commit `5bfdf1005c5d95c99143e8c2acd189e127e1cb10`, which publishes the `fit` surface and
   its five outcome event types (`fit.shown`, `fit.opened`, `fit.saved`, `fit.dismissed`,

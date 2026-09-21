@@ -489,6 +489,10 @@ each other to.
 - `validate_identifiers_block(block)` and `validate_companies_block(block)` check a decoded
   block against the published contract and raise `IdentifierValidationError` naming the first
   field that failed, with its path inside the block such as `items[1].source.field`.
+  Identifier items accept `discogs` or `musicbrainz` as their source provider, including the
+  MusicBrainz `barcode` and `label-info[].catalog-number` source fields. Company items remain
+  Discogs-only. The identifier schema permits any of its declared source fields with either
+  provider; validation does not impose a provider-field pairing beyond that schema.
 - `alias_refs_for_release(block, entity_kind="release")` returns the `AliasRef` list an
   identifiers block mints, ready to pass to `attach_aliases` with the native id the release
   resolved to. The block is validated first, so aliases cannot be minted out of a malformed
