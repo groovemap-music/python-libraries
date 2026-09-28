@@ -7,6 +7,12 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Bound `setup_logging`'s file sink and the `query_debug` profiling logger to a
+  `RotatingFileHandler` instead of an unbounded `FileHandler`, so every consumer's
+  application-written `/logs` file rolls over at `LOG_FILE_MAX_BYTES` (default 100 MiB)
+  and keeps at most `LOG_FILE_BACKUP_COUNT` backups (default 5), both overridable per
+  deployment via environment variable with no rebuild. Also documents that `ENVIRONMENT`
+  is log context only and never selects verbosity (`LOG_LEVEL` does).
 - Accept schema-valid MusicBrainz identifier sources in `common.identifiers`, including
   `barcode` and `label-info[].catalog-number`, while keeping company sources Discogs-only.
   MusicBrainz barcode and catalogue-number items mint the same normalized alias namespaces.

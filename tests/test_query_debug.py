@@ -1,6 +1,7 @@
 """Tests for query_debug module."""
 
 import logging
+from logging.handlers import RotatingFileHandler
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -121,6 +122,7 @@ class TestGetProfilingLogger:
         assert logger.name == "db_profiling"
         assert logger.propagate is False
         assert len(logger.handlers) >= 1
+        assert isinstance(logger.handlers[0], RotatingFileHandler)
 
     def test_caches_logger(self, tmp_path: Path) -> None:
         """Logger is cached after first call."""
