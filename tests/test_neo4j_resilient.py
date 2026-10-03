@@ -1,5 +1,8 @@
 """Tests for Neo4j resilient connection module."""
 
+import inspect
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -376,3 +379,16 @@ class TestAsyncNeo4jRetryDecorator:
             await wrapped()
 
         assert mock_func.call_count == 2
+
+
+def test_async_session_annotations_resolve_for_runtime_introspection() -> None:
+    """Python 3.14 evaluates lazy annotations when introspection requests values."""
+    session = AsyncResilientNeo4jDriver.session
+    signature = inspect.signature(session)
+    assert list(signature.parameters) == ["self", "kwargs"]
+    assert signature.parameters["kwargs"].kind is inspect.Parameter.VAR_KEYWORD
+    assert signature.parameters["kwargs"].annotation is Any
+    assert signature.return_annotation == AsyncIterator[Any]
+    assert inspect.get_annotations(session) == {"kwargs": Any, "return": AsyncIterator[Any]}
+    # asynccontextmanager exposes the generator through __wrapped__; both must resolve.
+    assert inspect.get_annotations(inspect.unwrap(session)) == {"kwargs": Any, "return": AsyncIterator[Any]}

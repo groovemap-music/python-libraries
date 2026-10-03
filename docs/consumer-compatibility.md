@@ -46,14 +46,20 @@ python scripts/verify-consumer-compatibility.py \
   --workspace /path/to/groovemap-music
 ```
 
-The verifier refuses a changed library package tree, a missing consumer commit, a consumer whose
-declared public source or lockfile does not contain its recorded immutable revision, or any matrix
+The verifier checks that the recorded historical library commit exists and contains both
+package source trees and build metadata matching the matrix package names and versions.
+Current library source may change without rewriting this immutable evidence. Historical
+validation does not attest compatibility of current library code or current consumers.
+The optional rehearsal refuses a missing consumer commit, a consumer whose declared public
+source or lockfile does not contain its recorded immutable revision, or any matrix
 that widens the ten-repository scope. It removes `GH_TOKEN`, `GITHUB_TOKEN`,
 `GROOVEMAP_CI_APP_CLIENT_ID`, and `GROOVEMAP_CI_APP_PRIVATE_KEY` from each subprocess and disables
 interactive Git prompting. It never writes to the source consumer checkout.
 
-Run `just consumer-matrix-check` for the portable repository-local matrix and package-tree checks.
-That command does not require sibling repositories and is part of `just check`.
+Run `just consumer-matrix-check` for the portable repository-local historical matrix and
+recorded package-tree checks. That command does not require sibling repositories and is
+part of `just check`. Current code is separately validated by the unit, distribution, and
+clean wheel-install gates; the historical matrix makes no new consumer-run claim.
 
 ## Completed infra handoff
 

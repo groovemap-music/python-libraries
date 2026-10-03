@@ -93,3 +93,105 @@ def test_active_guidance_keeps_private_access_dormant() -> None:
         assert stale_instruction not in authentication
         assert stale_instruction not in documentation_index
         assert stale_instruction not in (ROOT / "docs/consumer-compatibility.md").read_text()
+
+
+def test_historical_verifier_accepts_current_source_changes(tmp_path, monkeypatch) -> None:
+    """Historical evidence validates its commit even when current packages evolve."""
+    import subprocess
+
+    import pytest
+
+    verifier = runpy.run_path(ROOT / "scripts/verify-consumer-compatibility.py")
+    validate = verifier["validate_library_revision"]
+    original_run = verifier["run"]
+    monkeypatch.setitem(validate.__globals__, "run", lambda *command: original_run(*command, cwd=tmp_path))
+
+    def git(*args: str) -> str:
+        return subprocess.run(  # noqa: S603 — fixed test commands in a disposable repository
+            [verifier["GIT"], *args], cwd=tmp_path, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("init", "--quiet")
+    for metadata, source, name in (
+        ("pyproject.toml", "src/common", "groovemap-runtime"),
+        ("agent-tools/pyproject.toml", "agent-tools/src/common/agent_tools", "groovemap-agent-tools"),
+    ):
+        (tmp_path / metadata).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / metadata).write_text(
+            f'[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n[project]\nname = "{name}"\nversion = "0.1.0"\n'
+        )
+        (tmp_path / source).mkdir(parents=True)
+        (tmp_path / source / "__init__.py").write_text('VERSION = "historical"\n')
+    git("add", ".")
+    git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "-m",
+        "feat: historical packages",
+    )
+    revision = git("rev-parse", "HEAD")
+    matrix = copy.deepcopy(MATRIX)
+    matrix["library"]["revision"] = revision
+    (tmp_path / "src/common/__init__.py").write_text('VERSION = "current"\n')
+    (tmp_path / "pyproject.toml").write_text("invalid current metadata deliberately ignored")
+    git("add", ".")
+    git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "-m",
+        "fix: evolve current source independently of historical evidence",
+    )
+    assert git("rev-parse", "HEAD") != revision
+    validate(matrix)
+
+    # Forged historical package evidence and absent revisions must still fail.
+    matrix["library"]["packages"][0] = "groovemap-runtime==9.9.9"
+    with pytest.raises(AssertionError, match="historical package contract"):
+        validate(matrix)
+    matrix["library"]["revision"] = "0" * 40
+    with pytest.raises(subprocess.CalledProcessError):
+        validate(matrix)
+
+    # A real commit lacking one shipped package is not sufficient evidence.
+    (tmp_path / "pyproject.toml").write_text(git("show", f"{revision}:pyproject.toml"))
+    git("add", "pyproject.toml")
+    git("rm", "--quiet", "agent-tools/src/common/agent_tools/__init__.py")
+    git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "-m",
+        "fix: remove recorded package",
+    )
+    matrix["library"]["revision"] = git("rev-parse", "HEAD")
+    with pytest.raises(subprocess.CalledProcessError):
+        validate(matrix)
+
+
+def test_historical_matrix_verifier_rejects_widened_consumer_scope() -> None:
+    """Historical-only validation retains the exact ten-consumer boundary."""
+    import pytest
+
+    validate = runpy.run_path(ROOT / "scripts/verify-consumer-compatibility.py")["validate_matrix"]
+    validate(MATRIX)
+    widened = copy.deepcopy(MATRIX)
+    widened["consumers"][0]["repository"] = "unreviewed-consumer"
+    with pytest.raises(AssertionError):
+        validate(widened)
