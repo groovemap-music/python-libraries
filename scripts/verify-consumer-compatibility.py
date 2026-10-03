@@ -65,8 +65,7 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
     assert library["repository"] == "groovemap-music/python-libraries"
     assert len(library["revision"]) == 40
     assert library["python"] == "3.14.5"
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
-    assert library["packages"] == [f"groovemap-runtime=={version}", f"groovemap-agent-tools=={version}"]
+    assert len(library["packages"]) == 2
 
     verification = matrix["verification"]
     assert verification["consumer_command"] == "just check"
@@ -93,27 +92,28 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
 
 
 def validate_library_revision(matrix: dict[str, Any]) -> None:
-    """Require the recorded revision and an unchanged distributable package contract."""
+    """Validate the immutable historical package tree, not today's consumer compatibility.
+
+    Current source may evolve after the public cutover. The matrix still identifies
+    only its recorded revision; current unit, wheel, and install gates remain separate.
+    """
     revision = matrix["library"]["revision"]
     run(GIT, "cat-file", "-e", f"{revision}^{{commit}}")
-    subprocess.run(  # noqa: S603
-        [
-            GIT,
-            "diff",
-            "--quiet",
-            revision,
-            "HEAD",
-            "--",
-            "src",
-            "agent-tools/src",
-        ],
-        cwd=ROOT,
-        check=True,
-    )
-    for relative_path in ("pyproject.toml", "agent-tools/pyproject.toml"):
+    packages = []
+    for relative_path, source_path, package_name in (
+        ("pyproject.toml", "src/common", "groovemap-runtime"),
+        ("agent-tools/pyproject.toml", "agent-tools/src/common/agent_tools", "groovemap-agent-tools"),
+    ):
+        # Both the metadata and shipped source must exist at the recorded commit.
+        assert run(GIT, "cat-file", "-t", f"{revision}:{source_path}") == "tree"
+        assert run(GIT, "ls-tree", "-r", revision, "--", source_path), f"{source_path} has no recorded source"
         recorded = tomllib.loads(run(GIT, "show", f"{revision}:{relative_path}"))
-        current = tomllib.loads((ROOT / relative_path).read_text())
-        assert package_contract(current) == package_contract(recorded), f"{relative_path} changed the recorded package contract"
+        contract = package_contract(recorded)
+        assert contract["build-system"], f"{relative_path} has no recorded build contract"
+        project = contract["project"]
+        assert project["name"] == package_name
+        packages.append(f"{package_name}=={project['version']}")
+    assert matrix["library"]["packages"] == packages, "matrix packages differ from the historical package contract"
 
 
 def package_contract(config: dict[str, Any]) -> dict[str, Any]:
@@ -252,7 +252,7 @@ def main() -> None:
         missing = sorted(name for name in repositories if not (workspace / name / ".git").exists())
         assert not missing, f"workspace is missing consumer repositories: {', '.join(missing)}"
         verify_consumers(matrix, workspace, repositories)
-    print("Consumer compatibility evidence is internally consistent.")
+    print("Historical consumer compatibility evidence is internally consistent; current consumers are not attested.")
 
 
 if __name__ == "__main__":
