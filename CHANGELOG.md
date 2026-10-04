@@ -7,6 +7,9 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Preserved configured service and environment fields in structured records emitted by
+  background threads, including the health server writer.
+
 - Bound `setup_logging`'s file sink and the `query_debug` profiling logger to a
   `RotatingFileHandler` instead of an unbounded `FileHandler`, so every consumer's
   application-written `/logs` file rolls over at `LOG_FILE_MAX_BYTES` (default 100 MiB)
