@@ -298,12 +298,29 @@ def setup_logging(
         invalid_level_value = level
         resolved_level = logging.INFO
 
+    # Deployment identity belongs to the process, not to the context of the
+    # thread/task that happened to configure logging.  Keep binding it below for
+    # compatibility with callers that inspect structlog context, and also add it
+    # in the writer chain so fresh background threads cannot lose it.
+    environment = getenv("ENVIRONMENT", "development")
+
+    def add_deployment_context(
+        _logger: Any,
+        _method_name: str,
+        event_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Apply authoritative process deployment fields to every record."""
+        event_dict["service"] = service_name
+        event_dict["environment"] = environment
+        return event_dict
+
     # Configure structlog processors
     timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
 
     shared_processors: Sequence[Any] = [
         # Merge contextvars (correlation IDs, request context) into log entries
         structlog.contextvars.merge_contextvars,
+        add_deployment_context,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.PositionalArgumentsFormatter(),
@@ -330,7 +347,7 @@ def setup_logging(
     # Bind service-specific context that will be included in all log entries
     structlog.contextvars.bind_contextvars(
         service=service_name,
-        environment=getenv("ENVIRONMENT", "development"),
+        environment=environment,
     )
 
     # Set up standard logging handlers

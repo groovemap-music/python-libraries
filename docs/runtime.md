@@ -86,7 +86,10 @@ The stable configuration functions deliberately remain small:
 - `neo4j_security_kwargs()` maps `NEO4J_TLS_ENABLED` and `NEO4J_TLS_VERIFY` to Neo4j driver
   security options. Verification defaults to enabled whenever TLS is enabled.
 - `setup_logging(service_name, level=None, log_file=None)` configures JSON logs and binds
-  `service` plus `ENVIRONMENT` context. `level` takes precedence over `LOG_LEVEL`; an invalid
+  `service` plus `ENVIRONMENT` context. These process deployment fields are added by every JSON
+  writer, so records emitted from fresh threads and async tasks keep them even though request
+  context variables do not cross those boundaries. They are authoritative when an individual
+  log call supplies colliding field names. `level` takes precedence over `LOG_LEVEL`; an invalid
   value falls back to `INFO` and emits a warning. `ENVIRONMENT` is bound as log context only —
   it does **not** select verbosity. A deployment that never sets `ENVIRONMENT` logs
   `"environment":"development"` at whatever level `LOG_LEVEL` resolves to (`INFO` by default);
