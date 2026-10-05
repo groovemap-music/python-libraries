@@ -27,6 +27,23 @@ distribution installs a console command. See the local package contracts for the
 [runtime API](docs/runtime.md), [agent-tools API](docs/agent-tools.md), and
 [compatibility and release policy](docs/compatibility-and-releases.md).
 
+## Valkey connection settings
+
+`common.config._build_valkey_url()` reads `VALKEY_HOST` (default `localhost`),
+`VALKEY_PORT` (default `6379`), `VALKEY_PASSWORD`, and `VALKEY_PASSWORD_FILE`.
+It returns `valkey://` URLs for database 0, quotes passwords, and omits the
+authentication segment when no password is set. A nonempty password file path
+wins over the plain password; an unreadable file raises an error.
+
+During the configuration transition, each unset setting falls back to its
+`REDIS_*` counterpart and logs that deprecated variable's name once per process,
+without its value. Valkey settings win when both namespaces are present. Either
+Valkey password setting selects the Valkey password namespace; an explicitly
+empty password disables authentication rather than falling back to a Redis
+secret. `common.config._build_redis_url()` remains a compatibility builder using
+the same settings and precedence while returning `redis://` URLs. Consumers
+should migrate to the new builder and `VALKEY_*` variables.
+
 ## Development
 
 Install [mise](https://mise.jdx.dev/) and run:

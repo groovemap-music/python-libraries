@@ -81,6 +81,13 @@ base dependencies and would otherwise be missing a newly added one at runtime.
 
 The stable configuration functions deliberately remain small:
 
+- `_build_valkey_url()` reads `VALKEY_HOST`, `VALKEY_PORT`, `VALKEY_PASSWORD`, and
+  `VALKEY_PASSWORD_FILE`, with per-setting `REDIS_*` fallback during the transition.
+  Legacy variables log a deprecation warning once per process. Valkey password
+  settings select their namespace before `_FILE` precedence is applied; an explicit
+  empty password disables authentication. Defaults are `localhost:6379` and database
+  0. `_build_redis_url()` resolves the same settings with the compatibility scheme.
+
 - `parse_postgres_host_port(value, default_port=5432)` parses host, embedded-port, and IPv6
   forms without reading application settings.
 - `neo4j_security_kwargs()` maps `NEO4J_TLS_ENABLED` and `NEO4J_TLS_VERIFY` to Neo4j driver
