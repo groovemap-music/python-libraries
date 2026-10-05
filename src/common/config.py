@@ -1,4 +1,4 @@
-"""Reusable configuration primitives for GrooveMap services."""
+"""Reusable configuration primitives, including VALKEY_* settings and legacy REDIS_* fallback."""
 
 import logging
 import sys
@@ -6,6 +6,7 @@ import warnings
 from importlib import import_module
 from os import getenv
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, Any, overload
 from urllib.parse import quote as _url_quote
 
@@ -193,19 +194,66 @@ def _build_postgres_connstr() -> str:
     return f"{host}:{port}"
 
 
-def _build_redis_url() -> str:
-    """Build Redis connection URL from component secrets and environment variables.
+_deprecated_store_settings: set[str] = set()
+_deprecated_store_settings_lock = Lock()
 
-    Reads the password via the standard _FILE secret convention (Docker secrets),
-    falling back to the plain REDIS_PASSWORD environment variable. The auth segment
-    is omitted when no password is set so password-less local Redis keeps working.
+
+def _warn_redis_setting(name: str) -> None:
+    """Log each legacy setting once per process without exposing its value."""
+    with _deprecated_store_settings_lock:
+        if name in _deprecated_store_settings:
+            return
+        _deprecated_store_settings.add(name)
+    logger.warning("Deprecated Redis environment variable; use VALKEY_* instead", variable=name)
+
+
+def _store_setting(suffix: str, default: str) -> str:
+    value = getenv(f"VALKEY_{suffix}")
+    if value is not None:
+        return value
+    legacy = f"REDIS_{suffix}"
+    value = getenv(legacy)
+    if value is not None:
+        _warn_redis_setting(legacy)
+        return value
+    return default
+
+
+def _store_password() -> str | None:
+    # Select a namespace before applying _FILE precedence. Even an explicitly empty
+    # VALKEY_PASSWORD disables legacy authentication rather than reviving an old secret.
+    if getenv("VALKEY_PASSWORD") is not None or getenv("VALKEY_PASSWORD_FILE") is not None:
+        return get_secret("VALKEY_PASSWORD")
+    if getenv("REDIS_PASSWORD_FILE"):
+        _warn_redis_setting("REDIS_PASSWORD_FILE")
+    elif getenv("REDIS_PASSWORD") is not None:
+        _warn_redis_setting("REDIS_PASSWORD")
+    return get_secret("REDIS_PASSWORD")
+
+
+def _build_store_url(scheme: str) -> str:
+    password = _store_password()
+    host = _store_setting("HOST", "localhost")
+    port = _store_setting("PORT", "6379")
+    auth = f":{_url_quote(password, safe='')}@" if password else ""
+    return f"{scheme}://{auth}{host}:{port}/0"
+
+
+def _build_valkey_url() -> str:
+    """Build a valkey:// URL using VALKEY_HOST/PORT/PASSWORD and PASSWORD_FILE.
+
+    Unset settings fall back to their REDIS_* counterparts with a warning once per
+    legacy variable per process. VALKEY_* wins, including an explicitly empty
+    password. Within either password namespace, a nonempty _FILE path wins over
+    the plain variable; unreadable files fail rather than falling back. Passwords
+    are URL-quoted, absent passwords omit authentication, and the database is 0.
     """
-    password = get_secret("REDIS_PASSWORD")
-    host = getenv("REDIS_HOST", "localhost")
-    port = getenv("REDIS_PORT", "6379")
-    if password:
-        return f"redis://:{_url_quote(password, safe='')}@{host}:{port}/0"
-    return f"redis://{host}:{port}/0"
+    return _build_store_url("valkey")
+
+
+def _build_redis_url() -> str:
+    """Compatibility builder with the same Valkey-first settings and redis:// scheme."""
+    return _build_store_url("redis")
 
 
 def neo4j_security_kwargs() -> dict[str, Any]:
