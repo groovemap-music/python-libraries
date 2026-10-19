@@ -14,7 +14,7 @@ async def test_search_delegates() -> None:
     executor = AsyncMock(return_value={"results": [{"id": "1", "name": "Kraftwerk"}]})
     result = await search(
         pool=object(),
-        redis=object(),
+        valkey=object(),
         q="Kraftwerk",
         types=["artist"],
         genres=[],
@@ -72,7 +72,7 @@ async def test_search_forwards_a_validated_media_filter() -> None:
     executor = AsyncMock(return_value={"results": []})
     await search(
         pool=object(),
-        redis=object(),
+        valkey=object(),
         q="Kraftwerk",
         types=["release"],
         genres=[],
@@ -96,7 +96,7 @@ async def test_search_omits_media_entirely_when_no_filter_was_given(media: list[
     executor = AsyncMock(return_value={"results": []})
     await search(
         pool=object(),
-        redis=object(),
+        valkey=object(),
         q="Kraftwerk",
         types=["release"],
         genres=[],
@@ -119,7 +119,7 @@ async def test_search_rejects_media_ids_the_taxonomy_does_not_define() -> None:
     with pytest.raises(ValueError, match="unknown media ids: laserdisk, vinyl_13") as error:
         await search(
             pool=object(),
-            redis=object(),
+            valkey=object(),
             q="Kraftwerk",
             types=["release"],
             genres=[],
