@@ -7,6 +7,12 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Removed the transitional Redis configuration aliases: `common.config._build_redis_url()`
+  and the per-setting `REDIS_*` environment fallbacks (with their once-per-process
+  deprecation warnings) are gone. `_build_valkey_url()` reads only `VALKEY_HOST`,
+  `VALKEY_PORT`, `VALKEY_PASSWORD`, and `VALKEY_PASSWORD_FILE`; `REDIS_*` variables are
+  ignored. Deployments still setting only `REDIS_*` must rename them to `VALKEY_*`.
+
 - Preserved configured service and environment fields in structured records emitted by
   background threads, including the health server writer.
 

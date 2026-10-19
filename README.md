@@ -35,14 +35,9 @@ It returns `valkey://` URLs for database 0, quotes passwords, and omits the
 authentication segment when no password is set. A nonempty password file path
 wins over the plain password; an unreadable file raises an error.
 
-During the configuration transition, each unset setting falls back to its
-`REDIS_*` counterpart and logs that deprecated variable's name once per process,
-without its value. Valkey settings win when both namespaces are present. Either
-Valkey password setting selects the Valkey password namespace; an explicitly
-empty password disables authentication rather than falling back to a Redis
-secret. `common.config._build_redis_url()` remains a compatibility builder using
-the same settings and precedence while returning `redis://` URLs. Consumers
-should migrate to the new builder and `VALKEY_*` variables.
+Only `VALKEY_*` variables are read. The transitional `REDIS_*` fallbacks and the
+`common.config._build_redis_url()` compatibility builder have been removed; legacy
+`REDIS_*` variables are ignored.
 
 ## Development
 
