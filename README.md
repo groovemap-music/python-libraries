@@ -35,9 +35,7 @@ It returns `valkey://` URLs for database 0, quotes passwords, and omits the
 authentication segment when no password is set. A nonempty password file path
 wins over the plain password; an unreadable file raises an error.
 
-Only `VALKEY_*` variables are read. The transitional `REDIS_*` fallbacks and the
-`common.config._build_redis_url()` compatibility builder have been removed; legacy
-`REDIS_*` variables are ignored.
+Only `VALKEY_*` variables are read.
 
 ## Development
 
