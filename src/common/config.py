@@ -196,7 +196,7 @@ def _build_postgres_connstr() -> str:
 def _build_valkey_url() -> str:
     """Build a valkey:// URL using VALKEY_HOST/PORT/PASSWORD and PASSWORD_FILE.
 
-    Only VALKEY_* settings are read; legacy REDIS_* variables are ignored. A nonempty
+    Only VALKEY_* settings are read. A nonempty
     VALKEY_PASSWORD_FILE path wins over VALKEY_PASSWORD, and an unreadable file fails
     rather than falling back. Passwords are URL-quoted, absent or empty passwords omit
     authentication, and the database is always 0.

@@ -43,7 +43,7 @@ def validate_media_filter(media: Iterable[str]) -> list[str]:
 async def search(
     *,
     pool: Any,
-    redis: Any,
+    valkey: Any,
     q: str,
     types: list[str],
     genres: list[str],
@@ -69,7 +69,7 @@ async def search(
     """
     arguments: dict[str, Any] = {
         "pool": pool,
-        "redis": redis,
+        "valkey": valkey,
         "q": q,
         "types": types,
         "genres": genres,

@@ -7,6 +7,11 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- **BREAKING:** `common.agent_tools.discovery.search` now takes `valkey=` and forwards it to
+  `search_fn` under the `"valkey"` key, replacing the previous keyword. There is no
+  compatibility alias; downstream callers must pass `valkey=` after bumping to this
+  revision, and any `search_fn` must accept a `valkey` argument.
+
 - Removed the transitional Redis configuration aliases: `common.config._build_redis_url()`
   and the per-setting `REDIS_*` environment fallbacks (with their once-per-process
   deprecation warnings) are gone. `_build_valkey_url()` reads only `VALKEY_HOST`,
