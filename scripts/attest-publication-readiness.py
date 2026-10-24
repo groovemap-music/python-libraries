@@ -17,7 +17,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "groovemap-music/python-libraries"
 REPOSITORY_URL = f"https://github.com/{REPOSITORY}"
-AUTOMATION_REVISION = "833cb464507678c38ab78bd4718ce697399463e9"
+AUTOMATION_REVISIONS = {
+    "ci.yml": "dbf22ed83d486e9484fc8c6385c7c3e5995700e4",
+    "release.yml": "833cb464507678c38ab78bd4718ce697399463e9",
+}
 FORBIDDEN_HISTORY_PATHS = (
     re.compile(r"(^|/)\.planning(/|$)"),
     re.compile(r"(^|/)docs/superpowers/(plans|specs)(/|$)"),
@@ -124,10 +127,10 @@ def validate_automation() -> dict[str, Any]:
         path = ROOT / ".github/workflows" / name
         text = path.read_text()
         revisions = set(re.findall(r"groovemap-music/automation/[^@\s]+@([0-9a-f]{40})", text))
-        assert revisions == {AUTOMATION_REVISION}
+        assert revisions == {AUTOMATION_REVISIONS[name]}
         workflows[name] = digest(path)
     return {
-        "revision": AUTOMATION_REVISION,
+        "revisions": AUTOMATION_REVISIONS,
         "workflow_sha256": workflows,
     }
 

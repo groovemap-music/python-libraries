@@ -4,7 +4,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-AUTOMATION_REVISION = "833cb464507678c38ab78bd4718ce697399463e9"
+CI_AUTOMATION_REVISION = "dbf22ed83d486e9484fc8c6385c7c3e5995700e4"
+RELEASE_AUTOMATION_REVISION = "833cb464507678c38ab78bd4718ce697399463e9"
 
 
 def require_markers(text: str, markers: set[str], subject: str) -> None:
@@ -23,7 +24,7 @@ def validate_ci() -> None:
             "branches: [main]",
             "schedule:",
             "workflow_dispatch:",
-            f"groovemap-music/automation/.github/workflows/reusable-ci.yml@{AUTOMATION_REVISION}",
+            f"groovemap-music/automation/.github/workflows/reusable-ci.yml@{CI_AUTOMATION_REVISION}",
             "language: python",
             "setup-command: |",
             "just setup",
@@ -70,7 +71,7 @@ def validate_release() -> None:
             "attestations: write",
             "contents: read",
             "id-token: write",
-            f"groovemap-music/automation/.github/workflows/reusable-release.yml@{AUTOMATION_REVISION}",
+            f"groovemap-music/automation/.github/workflows/reusable-release.yml@{RELEASE_AUTOMATION_REVISION}",
             "repository-name: python-libraries",
             "setup-command: just setup",
             "check-command: just check",
