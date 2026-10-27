@@ -55,7 +55,7 @@ body.
 | --- | --- |
 | Discover and provision | `just` / `just default` lists recipes; `just setup` installs the locked workspace and all supported extras |
 | Repair and local feedback | `just format` applies formatting and safe lint fixes; `just test-integration` exercises the live RabbitMQ integration path |
-| Complete pre-merge gate | `just check` composes `format-check`, `lint`, `typecheck`, `test`, `automation-check`, `consumer-matrix-check`, `publication-readiness-check`, `media-taxonomy-check`, `build`, `distribution-check`, `install-check`, `license-check`, `secret-scan`, and `bump-preview` |
+| Complete pre-merge gate | `just check` runs `setup`, then composes `format-check`, `lint`, `typecheck`, `test`, `automation-check`, `consumer-matrix-check`, `publication-readiness-check`, `media-taxonomy-check`, `identity-vocabulary-check`, `event-vocabulary-check`, `identifier-vocabulary-check`, `company-role-vocabulary-check`, `build`, `distribution-check`, `install-check`, `license-check`, `secret-scan`, and `bump-preview` |
 | CI capability aliases | `just coverage` delegates to `test`; the other individual check dependencies are supported for focused CI or developer diagnosis |
 | Network and release rehearsal | `just audit` queries vulnerability data; `just release-dry-run` adds checksums, an SBOM, notices, and provenance after `check`; `just publication-readiness` adds `audit` and the final attestation |
 | Approved version maintenance | `just bump` updates local version metadata, changelog, and lock data only |
