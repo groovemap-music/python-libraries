@@ -54,9 +54,9 @@ purge or maintenance policy. Transient failures retain original order without se
 deterministic failures shrink toward `min_batch_size` and reject only at the poison threshold;
 bounded drain failure retains work for `run_periodic`.
 
-Consumers must pin immutable revision `f634851bb7f4598bd6a2b928b95e829f064cdd8f`, which contains
-both contracts, rather than a moving branch. Each owner hive should copy that revision into its
-dependency lock during migration.
+Both contracts are present from immutable revision `f634851bb7f4598bd6a2b928b95e829f064cdd8f`
+onward. Consumers pin an immutable revision at or after it, never a moving branch, and record
+that revision in their dependency lock.
 
 ## Optional capabilities
 
@@ -407,8 +407,8 @@ Ordering is fixed by the ADR because independent implementations must agree byte
 is sorted and de-duplicated. The first value wins for scalar release facts. Every field is
 always present, holding `null` or an empty list when unknown.
 
-`common.agent_tools.schemas` carries the same shape as `MediaBlock`, `MediaItem`, and
-`MediaSource` typed dictionaries for consumers that want the block statically checked.
+`common.agent_tools.schemas` carries the same shape as `MediaBlock`, `MediaItem`, `MediaSource`,
+and `MediaUnmapped` typed dictionaries for consumers that want the block statically checked.
 
 ## Identity boundary
 

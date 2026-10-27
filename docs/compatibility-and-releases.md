@@ -49,7 +49,7 @@ keeps both versions synchronized.
    or equivalently narrow identity.
 
 `just bump` does not commit, tag, push, publish, or release. Registry publication remains disabled
-during migration. Package publication, Git tags, pushes, and repository visibility changes always
+until a separately approved package release enables it. Package publication, Git tags, pushes, and repository visibility changes always
 require their own approval.
 
 A version bump is a coordinated step, not a per-change one. Every consumer in the compatibility
