@@ -480,7 +480,7 @@ distribution as package data, and `common.events` is the shared Python model.
 
 The validation is the standard library only, so no schema library enters this distribution's
 base dependencies and a consumer pinned to an older lockfile keeps resolving. What keeps it
-honest is `tests/test_events.py`, which validates all twenty-two vendored fixtures against the
+honest is `tests/test_events.py`, which validates all twenty-seven vendored fixtures against the
 vendored JSON Schemas with `jsonschema` — a development dependency — and asserts the standard
 library validator returns the same verdict on every one, including the four fixtures the design
 publishes as invalid. The Python model therefore cannot drift from the published schema without
@@ -530,7 +530,7 @@ nothing mints no alias rather than an empty key. Refs keep the block's item orde
 
 The validation is the standard library only, so no schema library enters this distribution's
 base dependencies and a consumer pinned to an older lockfile keeps resolving. What keeps it
-honest is `tests/test_identifiers.py`, which validates all twenty vendored design fixtures — and
+honest is `tests/test_identifiers.py`, which validates all twenty-two vendored design fixtures — and
 a generated mutation of each, covering every structural rule the schemas carry — against the
 vendored JSON Schemas with `jsonschema`, a development dependency, and asserts the
 standard-library validators return the same verdict every time. The Python contract therefore
