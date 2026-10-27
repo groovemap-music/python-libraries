@@ -1,6 +1,6 @@
 {
   "repository": "groovemap-music/design",
-  "commit": "14aa2d70dded6b0854569cc4909afc5ae4ebe03f",
+  "commit": "5bfdf1005c5d95c99143e8c2acd189e127e1cb10",
   "files": [
     {
       "path": "taxonomy/events/v1/fixtures/event-account-erasure-requested.json",
@@ -36,6 +36,31 @@
       "path": "taxonomy/events/v1/fixtures/event-consent-revoked.json",
       "vendored_as": "tests/fixtures/events/event-consent-revoked.json",
       "sha256": "05462db97face1ad4eafccc4e5a985b8e846df6a72c7361bde6604bf0eb5587e"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-fit-dismissed.json",
+      "vendored_as": "tests/fixtures/events/event-fit-dismissed.json",
+      "sha256": "1428283b21b70e358597966ae385bc474490dd8fa66bf77f0d2d740e411ac8e1"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-fit-hidden.json",
+      "vendored_as": "tests/fixtures/events/event-fit-hidden.json",
+      "sha256": "ad8d36bb6f18411c641fc50fde44313001f2bc55459f36ff4ab127b984f2dc79"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-fit-opened.json",
+      "vendored_as": "tests/fixtures/events/event-fit-opened.json",
+      "sha256": "24fc7ea4a723bd4071c9351bf5336fbc49ef0ae6911a01008e75933066e6a9a7"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-fit-saved.json",
+      "vendored_as": "tests/fixtures/events/event-fit-saved.json",
+      "sha256": "3f89b0ce034393def7b4c2798b41bd48eab319767a370f4b8cec0d4c401168c1"
+    },
+    {
+      "path": "taxonomy/events/v1/fixtures/event-fit-shown.json",
+      "vendored_as": "tests/fixtures/events/event-fit-shown.json",
+      "sha256": "f21c0e27fc4e63267434b429af7dee70e080b5123bde85ec5ec3e5715dc2ab3e"
     },
     {
       "path": "taxonomy/events/v1/fixtures/event-recommendation-dismissed.json",

@@ -1,6 +1,6 @@
 {
   "repository": "groovemap-music/design",
-  "commit": "d06e1571f6acce6a246e4c0b6be866ecbea44c72",
+  "commit": "5bfdf1005c5d95c99143e8c2acd189e127e1cb10",
   "files": [
     {
       "path": "taxonomy/identifiers/v1/fixtures/discogs-absent-catalogue-number.json",
@@ -51,6 +51,16 @@
       "path": "taxonomy/identifiers/v1/fixtures/discogs-unmapped-type.json",
       "vendored_as": "tests/fixtures/identifiers/discogs-unmapped-type.json",
       "sha256": "90a80b95975f34d8f74e56ebbddbcd943db9d2b6f5221f7030479da3be85c71b"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/musicbrainz-absent-barcode-and-malformed-label-info.json",
+      "vendored_as": "tests/fixtures/identifiers/musicbrainz-absent-barcode-and-malformed-label-info.json",
+      "sha256": "2d1c39be20e6f110d46d6e2e7ddec70b0488db227fafd4cf5ff1c88f14b43475"
+    },
+    {
+      "path": "taxonomy/identifiers/v1/fixtures/musicbrainz-barcode-and-catalogue-number.json",
+      "vendored_as": "tests/fixtures/identifiers/musicbrainz-barcode-and-catalogue-number.json",
+      "sha256": "3c185a4594a7b737ea0101784fd7e13960b032c67e9d255ba7a269bd5bbf227f"
     }
   ]
 }

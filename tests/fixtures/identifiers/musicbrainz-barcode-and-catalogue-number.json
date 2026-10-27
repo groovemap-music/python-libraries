@@ -1,0 +1,59 @@
+{
+  "name": "musicbrainz-barcode-and-catalogue-number",
+  "provider": "musicbrainz",
+  "description": "A MusicBrainz release's own barcode field and a single label-info catalogue number, each minting one alias in its namespace exactly as the Discogs fields do.",
+  "input": {
+    "barcode": "07599251581",
+    "label-info": [
+      {
+        "catalog-number": "1-25158",
+        "label": {
+          "id": "c595c289-47ce-4fba-b999-b87503e8cb71",
+          "name": "Warner Bros. Records"
+        }
+      }
+    ]
+  },
+  "expected": {
+    "identifiers_version": "1",
+    "items": [
+      {
+        "type": "barcode",
+        "value": "07599251581",
+        "description": null,
+        "source": {
+          "provider": "musicbrainz",
+          "type": null,
+          "field": "barcode"
+        }
+      },
+      {
+        "type": "catalog_number",
+        "value": "1-25158",
+        "description": null,
+        "source": {
+          "provider": "musicbrainz",
+          "type": null,
+          "field": "label-info[].catalog-number"
+        }
+      }
+    ],
+    "types": [
+      "barcode",
+      "catalog_number"
+    ],
+    "aliases": [
+      {
+        "provider": "barcode",
+        "external_id": "07599251581"
+      },
+      {
+        "provider": "catalog_number",
+        "external_id": "1-25158"
+      }
+    ],
+    "unmapped": {
+      "types": []
+    }
+  }
+}

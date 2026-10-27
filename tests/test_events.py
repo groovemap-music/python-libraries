@@ -125,7 +125,7 @@ class TestConformance:
     def test_the_vendored_fixture_set_is_the_published_one(self) -> None:
         cases = [json.loads(path.read_text()) for path in fixtures()]
 
-        assert len(cases) == 22
+        assert len(cases) == 27
         assert sum(1 for case in cases if not case["valid"]) == 4
         assert {case["envelope"] for case in cases} == {"event", "impression"}
 

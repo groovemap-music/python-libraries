@@ -268,9 +268,12 @@ class TestConformance:
         assert failure.value.field == "items[0].source.provider"
 
     def test_the_vendored_fixture_set_is_the_published_one(self) -> None:
-        assert len(IDENTIFIER_FIXTURES) == 10
+        assert len(IDENTIFIER_FIXTURES) == 12
         assert len(COMPANY_FIXTURES) == 10
-        assert all(json.loads(path.read_text())["provider"] == "discogs" for path in IDENTIFIER_FIXTURES + COMPANY_FIXTURES)
+        providers = [json.loads(path.read_text())["provider"] for path in IDENTIFIER_FIXTURES]
+        assert sorted(set(providers)) == ["discogs", "musicbrainz"]
+        assert providers.count("musicbrainz") == 2
+        assert all(json.loads(path.read_text())["provider"] == "discogs" for path in COMPANY_FIXTURES)
 
     @pytest.mark.parametrize("fixture", IDENTIFIER_FIXTURES + COMPANY_FIXTURES, ids=lambda path: f"{path.parent.name}/{path.stem}")
     def test_every_published_block_is_valid_under_both_validators(self, fixture: Path) -> None:
