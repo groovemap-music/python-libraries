@@ -141,3 +141,92 @@ async def test_observer_context_failures_are_isolated(failure_point: str) -> Non
     )
     assert result.settlement is Settlement.ACK
     delivery.ack.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [FailureKind.TRANSIENT, FailureKind.DETERMINISTIC])
+async def test_admitted_write_releases_before_retry_and_settlement(kind: FailureKind) -> None:
+    from common import WriteAdmission
+
+    admission = WriteAdmission(1)
+    delivery = AsyncMock()
+    observer = Observer()
+    observer.settled.side_effect = RuntimeError("metrics")
+    retried = False
+
+    async def operation() -> DeliveryResult:
+        async with admission.slot():
+            raise ConnectionError("database")
+
+    async def wait() -> None:
+        nonlocal retried
+        async with admission.slot():
+            retried = True
+
+    async def settle(*, requeue: bool) -> None:
+        assert requeue is (kind is FailureKind.TRANSIENT)
+        async with admission.slot():
+            pass
+
+    delivery.nack.side_effect = settle
+    result = await run_delivery(
+        delivery,
+        operation,
+        classifier=lambda _: kind,
+        observer=observer,
+        destination="queue",
+        entity="release",
+        wait_before_requeue=wait,
+    )
+    assert retried is (kind is FailureKind.TRANSIENT)
+    assert result.settlement is (Settlement.REQUEUE if kind is FailureKind.TRANSIENT else Settlement.REJECT)
+    delivery.nack.assert_awaited_once_with(requeue=kind is FailureKind.TRANSIENT)
+    delivery.ack.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_waiting", [False, True])
+async def test_admission_cancellation_preserves_delivery_ownership(cancel_waiting: bool) -> None:
+    from common import WriteAdmission
+
+    admission = WriteAdmission(1)
+    blocker = admission.slot()
+    if cancel_waiting:
+        await blocker.__aenter__()
+    delivery, classifier, wait = AsyncMock(), Mock(), AsyncMock()
+    observer = Observer()
+    attempted = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def operation() -> DeliveryResult:
+        attempted.set()
+        async with admission.slot():
+            entered.set()
+            await asyncio.Future[None]()
+        return DeliveryResult(Settlement.ACK, "ok")
+
+    task = asyncio.create_task(
+        run_delivery(
+            delivery,
+            operation,
+            classifier=classifier,
+            observer=observer,
+            destination="queue",
+            entity="release",
+            wait_before_requeue=wait,
+        )
+    )
+    await attempted.wait()
+    assert entered.is_set() is (not cancel_waiting)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    if cancel_waiting:
+        await blocker.__aexit__(None, None, None)
+    async with admission.slot():
+        pass
+    classifier.assert_not_called()
+    wait.assert_not_awaited()
+    observer.settled.assert_not_called()
+    delivery.ack.assert_not_awaited()
+    delivery.nack.assert_not_awaited()

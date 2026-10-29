@@ -24,7 +24,7 @@ if TYPE_CHECKING:
         async_resilient_connection,
         resilient_connection,
     )
-    from common.delivery import Delivery, DeliveryObserver, DeliveryResult, FailureClassifier, FailureKind, Settlement, run_delivery
+    from common.delivery import Delivery, DeliveryObserver, DeliveryResult, FailureClassifier, FailureKind, Settlement, WriteAdmission, run_delivery
     from common.errors import describe_exception
     from common.events import (
         Event,
@@ -90,6 +90,7 @@ if TYPE_CHECKING:
 
 
 _EXPORTS: dict[str, tuple[str, str]] = {
+    "WriteAdmission": ("common.delivery", "WriteAdmission"),
     "AsyncBatchEngine": ("common.batch", "AsyncBatchEngine"),
     "BatchItemResult": ("common.batch", "BatchItemResult"),
     "BatchObserver": ("common.batch", "BatchObserver"),
