@@ -31,6 +31,7 @@ RUNTIME_EXPORTS = {
     "ConnectionEstablishmentError",
     "DatabaseUnavailableError",
     "Delivery",
+    "DeliveryAdmission",
     "DeliveryObserver",
     "DeliveryResult",
     "Event",

@@ -15,9 +15,29 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import AsyncIterator, Awaitable, Callable
     from contextlib import AbstractContextManager
     from types import TracebackType
+
+
+class DeliveryAdmission:
+    """Share a fixed concurrency budget across consumers on one event loop.
+
+    Acquire immediately before database work, outside the connection pool's wait
+    queue. Keep the instance across broker reconnects so old and new consumers
+    share a budget. Service policy chooses capacity and which operations use it.
+    """
+
+    def __init__(self, capacity: int) -> None:
+        if capacity < 1:
+            raise ValueError("delivery admission capacity must be positive")
+        self._slots = asyncio.BoundedSemaphore(capacity)
+
+    @contextlib.asynccontextmanager
+    async def slot(self) -> AsyncIterator[None]:
+        """Release on success, failure, or cancellation; cancelled waiters own no slot."""
+        async with self._slots:
+            yield
 
 
 class Settlement(StrEnum):

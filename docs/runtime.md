@@ -13,7 +13,7 @@ from an implementation module, when a name appears here.
 | --- | --- |
 | Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging` |
 | Data and diagnostics | `normalize_record`, `describe_exception` |
-| Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `run_delivery` |
+| Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `DeliveryAdmission`, `run_delivery` |
 | Discogs batch lifecycle | `BatchItemResult`, `BatchPolicy`, `BatchSink`, `BatchObserver`, `AsyncBatchEngine` |
 | First-party events | `Event`, `Impression`, `EventValidationError`, `event_types`, `surfaces`, `consent_purposes`, `payload_schema_for`, `is_valid_event_type`, `validate_event`, `validate_impression`, `new_event`, `new_impression` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
@@ -41,6 +41,13 @@ imports it during migration.
 single-delivery consumers. Handlers return `DeliveryResult`; `DEFER` deliberately leaves the
 delivery untouched. Concrete exception membership, validation, control state, QoS, storage, and
 metric names stay in each owner repository through its classifier and observer adapters.
+
+`DeliveryAdmission(capacity)` shares one fixed concurrency budget across consumer queues.
+Use `async with admission.slot():` immediately before database work and pool acquisition.
+The slot is returned on success, failure, or cancellation; a cancelled waiter consumes no
+capacity. Keep the same instance across broker reconnects so draining and replacement
+consumers share the bound. Construct a new instance for a new event loop. The service
+chooses its PostgreSQL capacity and leaves broker settlement to `run_delivery`.
 
 `process_message_with_retry` remains import-compatible during migration, but is deprecated.
 `max_retries` no longer starts an in-process retry loop: a failure is settled once for broker

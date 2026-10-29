@@ -24,7 +24,16 @@ if TYPE_CHECKING:
         async_resilient_connection,
         resilient_connection,
     )
-    from common.delivery import Delivery, DeliveryObserver, DeliveryResult, FailureClassifier, FailureKind, Settlement, run_delivery
+    from common.delivery import (
+        Delivery,
+        DeliveryAdmission,
+        DeliveryObserver,
+        DeliveryResult,
+        FailureClassifier,
+        FailureKind,
+        Settlement,
+        run_delivery,
+    )
     from common.errors import describe_exception
     from common.events import (
         Event,
@@ -112,6 +121,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "resilient_connection": ("common.db_resilience", "resilient_connection"),
     "describe_exception": ("common.errors", "describe_exception"),
     "Delivery": ("common.delivery", "Delivery"),
+    "DeliveryAdmission": ("common.delivery", "DeliveryAdmission"),
     "DeliveryObserver": ("common.delivery", "DeliveryObserver"),
     "DeliveryResult": ("common.delivery", "DeliveryResult"),
     "FailureClassifier": ("common.delivery", "FailureClassifier"),
