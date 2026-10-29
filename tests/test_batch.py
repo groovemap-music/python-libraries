@@ -343,3 +343,41 @@ async def test_backpressure_releases_capacity_once_after_settlement() -> None:
     assert not second.done()
     await batch.flush("release")
     await asyncio.wait_for(second, timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_batch_enqueue_needs_no_write_slot_and_cancelled_flush_retains_work() -> None:
+    from common import WriteAdmission
+
+    admission = WriteAdmission(1)
+    attempted = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def write(_key: str, payloads: list[int]):
+        attempted.set()
+        async with admission.slot():
+            entered.set()
+            return [BatchItemResult(Settlement.ACK, "ok") for _ in payloads]
+
+    batch = engine(Mock(write=write), max_pending=1, batch_size=1)
+    delivery = StrictDelivery()
+    async with admission.slot():
+        # A direct writer holds the entire DB budget. Enqueue still completes;
+        # only an actual sink write waits, without changing batch ownership.
+        await batch.submit("release", 1, delivery)
+        flush = asyncio.create_task(batch.flush("release"))
+        await attempted.wait()
+        assert not entered.is_set()
+        assert delivery.calls == []
+        flush.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await flush
+        assert batch.snapshot()["pending"]["release"] == 1  # type: ignore[index]
+        assert delivery.calls == []
+    assert await batch.flush("release") is True
+    assert entered.is_set()
+    assert delivery.calls == ["ack"]
+    assert batch.snapshot()["pending"]["release"] == 0  # type: ignore[index]
+    # Settlement also returned the independent pending capacity.
+    await batch.submit("release", 2, StrictDelivery())
+    assert await batch.flush("release") is True

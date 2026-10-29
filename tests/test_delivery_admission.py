@@ -4,18 +4,18 @@ import asyncio
 
 import pytest
 
-from common import DeliveryAdmission
+from common import WriteAdmission
 
 
 @pytest.mark.parametrize("capacity", [0, -1])
 def test_admission_rejects_nonpositive_capacity(capacity: int) -> None:
     with pytest.raises(ValueError, match="positive"):
-        DeliveryAdmission(capacity)
+        WriteAdmission(capacity)
 
 
 @pytest.mark.asyncio
 async def test_shared_capacity_and_cancelled_waiter_and_holder() -> None:
-    admission = DeliveryAdmission(2)
+    admission = WriteAdmission(2)
     entered = asyncio.Event()
     release = asyncio.Event()
     active = peak = 0
@@ -55,7 +55,7 @@ async def test_shared_capacity_and_cancelled_waiter_and_holder() -> None:
 
 @pytest.mark.asyncio
 async def test_failure_returns_slot() -> None:
-    admission = DeliveryAdmission(1)
+    admission = WriteAdmission(1)
     with pytest.raises(RuntimeError, match="write failed"):
         async with admission.slot():
             raise RuntimeError("write failed")

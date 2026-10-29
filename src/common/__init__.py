@@ -26,12 +26,12 @@ if TYPE_CHECKING:
     )
     from common.delivery import (
         Delivery,
-        DeliveryAdmission,
         DeliveryObserver,
         DeliveryResult,
         FailureClassifier,
         FailureKind,
         Settlement,
+        WriteAdmission,
         run_delivery,
     )
     from common.errors import describe_exception
@@ -121,12 +121,12 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "resilient_connection": ("common.db_resilience", "resilient_connection"),
     "describe_exception": ("common.errors", "describe_exception"),
     "Delivery": ("common.delivery", "Delivery"),
-    "DeliveryAdmission": ("common.delivery", "DeliveryAdmission"),
     "DeliveryObserver": ("common.delivery", "DeliveryObserver"),
     "DeliveryResult": ("common.delivery", "DeliveryResult"),
     "FailureClassifier": ("common.delivery", "FailureClassifier"),
     "FailureKind": ("common.delivery", "FailureKind"),
     "Settlement": ("common.delivery", "Settlement"),
+    "WriteAdmission": ("common.delivery", "WriteAdmission"),
     "run_delivery": ("common.delivery", "run_delivery"),
     "Event": ("common.events", "Event"),
     "EventValidationError": ("common.events", "EventValidationError"),

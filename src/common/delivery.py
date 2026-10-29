@@ -20,23 +20,29 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 
-class DeliveryAdmission:
-    """Share a fixed concurrency budget across consumers on one event loop.
+class WriteAdmission:
+    """One event-loop-owned database work budget shared by all service queues.
 
-    Acquire immediately before database work, outside the connection pool's wait
-    queue. Keep the instance across broker reconnects so old and new consumers
-    share a budget. Service policy chooses capacity and which operations use it.
+    Construct once per service lifespan in its running loop. Callers supply the
+    pool-sized capacity and enter :meth:`slot` before acquiring a connection.
     """
 
     def __init__(self, capacity: int) -> None:
-        if capacity < 1:
-            raise ValueError("delivery admission capacity must be positive")
-        self._slots = asyncio.BoundedSemaphore(capacity)
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity <= 0:
+            raise ValueError("write admission capacity must be a positive integer")
+        self._loop = asyncio.get_running_loop()
+        self._semaphore = asyncio.BoundedSemaphore(capacity)
 
     @contextlib.asynccontextmanager
     async def slot(self) -> AsyncIterator[None]:
-        """Release on success, failure, or cancellation; cancelled waiters own no slot."""
-        async with self._slots:
+        """Bound actual work, releasing on success, exception, or cancellation.
+
+        Waiting cancellation never releases a permit it did not acquire. A fresh
+        context is required for each attempt; enqueue and retry delays stay outside.
+        """
+        if asyncio.get_running_loop() is not self._loop:
+            raise RuntimeError("write admission belongs to a different event loop; create one for this lifespan")
+        async with self._semaphore:
             yield
 
 
