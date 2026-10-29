@@ -42,6 +42,35 @@ single-delivery consumers. Handlers return `DeliveryResult`; `DEFER` deliberatel
 delivery untouched. Concrete exception membership, validation, control state, QoS, storage, and
 metric names stay in each owner repository through its classifier and observer adapters.
 
+`WriteAdmission(capacity)` supplies one asynchronous work budget for all entity queues in a
+service process. Capacity must be a positive integer; booleans are invalid. Construct it in
+the running service loop, once per lifespan, from the consumer's PostgreSQL pool policy. Pass
+the same instance to every direct-write handler and any batch sink using that pool. Multiple
+budgets for the same pool do not compose into a shared bound. Separate processes or loops need
+their own pools and budgets; this is not a distributed limit.
+
+Wrap each whole delivery callback in `async with admission.handler():`. This scope tracks the
+callback lifetime, including nested callback scopes, without taking a database permit. Acquire
+`async with admission.slot():` immediately before entering the pool wait, and retain it until
+transaction and connection cleanup complete. Slot waiters and permit holders both count as
+active work for drain. A cancelled waiter does not consume or release another writer's
+capacity; cancellation during a write returns the slot. Enqueue, retry delays, and broker
+settlement remain outside the slot; `run_delivery` still owns single-message settlement.
+
+After stopping all delivery and background producers, the service owner can call
+`await admission.drain(timeout=CONSUMER_CANCEL_TIMEOUT)`. Drain returns `True` when all handler
+and SQL scopes exit, or `False` on timeout; it never cancels callbacks or releases permits.
+The timeout is required and must be finite and non-negative; zero gives a non-blocking idle
+probe.
+Cancellation of the drain caller propagates without canceling the tracked work. Calling drain
+inside a tracked scope includes that scope and cannot report idle until it exits. Drain only
+observes callback and SQL work: broker closure, confirmed delivery shutdown, and pool disposal
+remain service lifecycle policy.
+
+The initial published revision of this PR, `264e1d8`, named the primitive
+`DeliveryAdmission`. The reviewed API is `WriteAdmission`; this unreleased follow-up replaces
+the name without a compatibility alias so the runtime exports one canonical admission API.
+
 `process_message_with_retry` remains import-compatible during migration, but is deprecated.
 `max_retries` no longer starts an in-process retry loop: a failure is settled once for broker
 redelivery (or rejection), and the original handler exception remains visible to the caller.
@@ -57,61 +86,6 @@ bounded drain failure retains work for `run_periodic`.
 Both contracts are present from immutable revision `f634851bb7f4598bd6a2b928b95e829f064cdd8f`
 onward. Consumers pin an immutable revision at or after it, never a moving branch, and record
 that revision in their dependency lock.
-
-## Shared database write admission
-
-`WriteAdmission(capacity)` supplies one asynchronous work budget for all entity queues
-in a service process. The capacity must be a positive integer (booleans are invalid).
-Construct it in the running service loop, once per lifespan, from the consumer's
-PostgreSQL pool policy. Pass the same instance to every direct-write handler and any
-batch sink using that pool. Multiple budgets for the same pool do not compose into a
-shared bound. Separate processes or loops need their own pools and budgets; this is
-not a distributed limit.
-
-For both `discogs-sql-loader` and `musicbrainz-sql-loader`, acquire a slot immediately
-before entering the pool wait, and retain it until transaction and connection cleanup
-complete:
-
-```python
-from common import WriteAdmission
-
-# Inside application startup on the running loop:
-admission = WriteAdmission(pool_write_capacity)  # consumer policy, no runtime default
-
-# Inside the database operation passed to run_delivery, or inside BatchSink.write:
-async with admission.slot():
-    async with pool.connection() as connection:
-        await write_transaction(connection, payload)
-```
-
-Do validation and control checks before the slot when possible. A slot covers the
-actual database attempt, including pool wait and cleanup. Never wrap `run_delivery`
-itself: broker settlement, observers, and requeue backoff must run after the slot is
-released. Never wrap `AsyncBatchEngine.submit` or wait for a batch to fill while holding
-a slot. Apply admission inside the sink's write method instead, leaving the existing
-pending and concurrent-flush limits independent. This also bounds mixed direct and
-batch writes when both use the same budget.
-
-`slot()` returns a fresh async context manager. Normal completion, exceptions, and
-cancellation inside work release exactly one acquired permit; cancelling while waiting
-releases none. Cancellation still propagates to the delivery/batch owner. The helper
-does not classify failures, retry, settle messages, change QoS, or acquire connections.
-Do not detach database work into a background task that outlives the slot.
-
-The instance belongs to the loop that constructed it; even uncontended cross-loop use
-raises `RuntimeError`. During shutdown, stop accepting work and await or cancel and join
-all handlers/flushes before closing their pool and dropping their admission instance.
-Create a fresh instance for each subsequent lifespan/test, including a restart on the
-same loop. Replacing a budget while old tasks still run can exceed the pool budget.
-There is no global semaphore cache or reset operation.
-
-The runtime producer bead is `gm-python-libraries-2bz`. The loader handoff must record
-its full immutable reviewed commit SHA after normal review and merge, and both loaders
-must pin that commit (or an immutable descendant containing it) in their dependency
-metadata and lockfiles before importing `WriteAdmission`. The existing pin
-`9bac0220df80fdb550fde78d4db8228ca4273625` predates this contract. A moving branch or an
-unreviewed implementation SHA is not the handoff. Producer review/merge gates loader
-integration; package publication, release, and deployment require separate authorization.
 
 ## Optional capabilities
 

@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 from enum import StrEnum
+from math import isfinite
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -21,10 +22,12 @@ if TYPE_CHECKING:
 
 
 class WriteAdmission:
-    """One event-loop-owned database work budget shared by all service queues.
+    """One event-loop-owned database work budget and callback drain tracker.
 
     Construct once per service lifespan in its running loop. Callers supply the
     pool-sized capacity and enter :meth:`slot` before acquiring a connection.
+    Wrap each complete delivery callback in :meth:`handler` and call :meth:`drain`
+    only after stopping every producer that can start a new callback.
     """
 
     def __init__(self, capacity: int) -> None:
@@ -32,18 +35,75 @@ class WriteAdmission:
             raise ValueError("write admission capacity must be a positive integer")
         self._loop = asyncio.get_running_loop()
         self._semaphore = asyncio.BoundedSemaphore(capacity)
+        self._scopes = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+
+    def _check_loop(self) -> None:
+        if asyncio.get_running_loop() is not self._loop:
+            raise RuntimeError("write admission belongs to a different event loop; create one for this lifespan")
+
+    @contextlib.asynccontextmanager
+    async def _tracked_scope(self) -> AsyncIterator[None]:
+        self._check_loop()
+        self._scopes += 1
+        self._idle.clear()
+        try:
+            yield
+        finally:
+            self._scopes -= 1
+            if self._scopes == 0:
+                self._idle.set()
+
+    @contextlib.asynccontextmanager
+    async def handler(self) -> AsyncIterator[None]:
+        """Track a complete callback without consuming a database write permit.
+
+        Nested handler scopes count independently. Use this around the full
+        delivery callback, including any enqueue or retry coordination.
+        """
+        async with self._tracked_scope():
+            yield
 
     @contextlib.asynccontextmanager
     async def slot(self) -> AsyncIterator[None]:
         """Bound actual work, releasing on success, exception, or cancellation.
 
-        Waiting cancellation never releases a permit it did not acquire. A fresh
-        context is required for each attempt; enqueue and retry delays stay outside.
+        The drain tracker includes waiters as well as permit holders. Waiting
+        cancellation never releases a permit it did not acquire. A fresh context
+        is required for each attempt; enqueue and retry delays stay outside.
         """
-        if asyncio.get_running_loop() is not self._loop:
-            raise RuntimeError("write admission belongs to a different event loop; create one for this lifespan")
-        async with self._semaphore:
+        async with self._tracked_scope(), self._semaphore:
             yield
+
+    async def drain(self, *, timeout: float) -> bool:
+        """Wait for all tracked handlers and SQL scopes, without canceling work.
+
+        The owner must stop delivery and background producers before draining.
+        A timeout returns ``False`` and leaves every handler, waiter, and permit
+        untouched. A drain called from inside a tracked scope counts that scope;
+        it therefore cannot report idle until that scope exits.
+        """
+        self._check_loop()
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise ValueError("write admission drain timeout must be a finite non-negative number")
+        try:
+            finite_timeout = isfinite(timeout)
+        except OverflowError:
+            finite_timeout = False
+        if not finite_timeout or timeout < 0:
+            raise ValueError("write admission drain timeout must be a finite non-negative number")
+        if self._scopes == 0:
+            return True
+        if timeout == 0:
+            return False
+        try:
+            async with asyncio.timeout(timeout):
+                while self._scopes:
+                    await self._idle.wait()
+        except TimeoutError:
+            return False
+        return True
 
 
 class Settlement(StrEnum):
