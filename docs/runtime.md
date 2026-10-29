@@ -49,10 +49,23 @@ the same instance to every direct-write handler and any batch sink using that po
 budgets for the same pool do not compose into a shared bound. Separate processes or loops need
 their own pools and budgets; this is not a distributed limit.
 
-Acquire a slot immediately before entering the pool wait, and retain it until transaction and
-connection cleanup complete. A cancelled waiter does not consume or release another writer's
-capacity; cancellation during a write returns the slot. Enqueue and retry delays remain
-outside the slot. Broker settlement remains owned by `run_delivery`.
+Wrap each whole delivery callback in `async with admission.handler():`. This scope tracks the
+callback lifetime, including nested callback scopes, without taking a database permit. Acquire
+`async with admission.slot():` immediately before entering the pool wait, and retain it until
+transaction and connection cleanup complete. Slot waiters and permit holders both count as
+active work for drain. A cancelled waiter does not consume or release another writer's
+capacity; cancellation during a write returns the slot. Enqueue, retry delays, and broker
+settlement remain outside the slot; `run_delivery` still owns single-message settlement.
+
+After stopping all delivery and background producers, the service owner can call
+`await admission.drain(timeout=CONSUMER_CANCEL_TIMEOUT)`. Drain returns `True` when all handler
+and SQL scopes exit, or `False` on timeout; it never cancels callbacks or releases permits.
+The timeout is required and must be finite and non-negative; zero gives a non-blocking idle
+probe.
+Cancellation of the drain caller propagates without canceling the tracked work. Calling drain
+inside a tracked scope includes that scope and cannot report idle until it exits. Drain only
+observes callback and SQL work: broker closure, confirmed delivery shutdown, and pool disposal
+remain service lifecycle policy.
 
 The initial published revision of this PR, `264e1d8`, named the primitive
 `DeliveryAdmission`. The reviewed API is `WriteAdmission`; this unreleased follow-up replaces

@@ -236,3 +236,225 @@ async def test_control_manual_acquisition_without_cleanup_leaks_on_cancellation(
     semaphore.release()
     await retry
     assert recovered.is_set()
+
+
+@pytest.mark.asyncio
+async def test_handler_tracking_is_nested_and_does_not_consume_a_write_permit() -> None:
+    admission = WriteAdmission(1)
+    holder = admission.slot()
+    await holder.__aenter__()
+    try:
+        # Handler entry remains possible while the database budget is full.
+        async with admission.handler():
+            pass
+    finally:
+        await holder.__aexit__(None, None, None)
+
+    async with admission.handler():
+        async with admission.handler():
+            assert await admission.drain(timeout=0) is False
+        # The outer callback is still tracked after the nested scope exits.
+        assert await admission.drain(timeout=0) is False
+    assert await admission.drain(timeout=0) is True
+
+
+@pytest.mark.asyncio
+async def test_drain_tracks_sql_waiters_and_timeout_preserves_work_and_permits() -> None:
+    admission = WriteAdmission(1)
+    holder = admission.slot()
+    await holder.__aenter__()
+    attempted = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def waiting_write() -> None:
+        attempted.set()
+        async with admission.slot():
+            entered.set()
+
+    waiter = asyncio.create_task(waiting_write())
+    await attempted.wait()
+    assert await admission.drain(timeout=0) is False
+    assert not entered.is_set()
+    assert not waiter.done()
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert await admission.drain(timeout=0) is False  # the holder remains tracked
+    await holder.__aexit__(None, None, None)
+    assert await admission.drain(timeout=0) is True
+    async with admission.slot():
+        pass
+
+
+@pytest.mark.asyncio
+async def test_drain_does_not_report_idle_between_waiter_wakeup_and_resume() -> None:
+    admission = WriteAdmission(1)
+    holder = admission.slot()
+    await holder.__aenter__()
+    attempted = asyncio.Event()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def waiting_write() -> None:
+        attempted.set()
+        async with admission.slot():
+            entered.set()
+            await release.wait()
+
+    waiter = asyncio.create_task(waiting_write())
+    await attempted.wait()
+    await asyncio.sleep(0)  # let the waiter block on the held semaphore
+    await holder.__aexit__(None, None, None)  # wakes the waiter without running it yet
+    assert not entered.is_set()
+    assert await admission.drain(timeout=0) is False
+    await entered.wait()
+    release.set()
+    await waiter
+    assert await admission.drain(timeout=0) is True
+
+
+@pytest.mark.asyncio
+async def test_drain_succeeds_only_after_final_handler_and_sql_scope_exit() -> None:
+    admission = WriteAdmission(1)
+    sql_entered = asyncio.Event()
+    release_sql = asyncio.Event()
+    handler_entered = asyncio.Event()
+    release_handler = asyncio.Event()
+
+    async def callback() -> None:
+        async with admission.handler():
+            handler_entered.set()
+            async with admission.slot():
+                sql_entered.set()
+                await release_sql.wait()
+            await release_handler.wait()
+
+    work = asyncio.create_task(callback())
+    await handler_entered.wait()
+    await sql_entered.wait()
+    drain = asyncio.create_task(admission.drain(timeout=1))
+    await asyncio.sleep(0)
+    assert not drain.done()
+    release_sql.set()
+    await asyncio.sleep(0)
+    assert not drain.done()  # the callback remains active beyond SQL work
+    release_handler.set()
+    assert await drain is True
+    await work
+
+
+@pytest.mark.asyncio
+async def test_drain_rechecks_scope_count_after_idle_wakeup() -> None:
+    admission = WriteAdmission(1)
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_entered = asyncio.Event()
+    release_second = asyncio.Event()
+
+    async def callbacks() -> None:
+        async with admission.handler():
+            first_entered.set()
+            await release_first.wait()
+        # No suspension between scopes: the first exit wakes the drainer, then
+        # this callback enters another tracked scope before the drainer resumes.
+        async with admission.handler():
+            second_entered.set()
+            await release_second.wait()
+
+    work = asyncio.create_task(callbacks())
+    await first_entered.wait()
+    drain = asyncio.create_task(admission.drain(timeout=60))
+    await asyncio.sleep(0)
+    release_first.set()
+    await second_entered.wait()
+    await asyncio.sleep(0)
+    assert not drain.done()
+    release_second.set()
+    assert await drain is True
+    await work
+
+
+@pytest.mark.asyncio
+async def test_cancelled_drain_does_not_cancel_handlers_or_release_permits() -> None:
+    admission = WriteAdmission(1)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def write() -> None:
+        async with admission.handler(), admission.slot():
+            entered.set()
+            await release.wait()
+
+    work = asyncio.create_task(write())
+    await entered.wait()
+    drainer = asyncio.create_task(admission.drain(timeout=10))
+    await asyncio.sleep(0)
+    drainer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await drainer
+    assert not work.done()
+
+    contender_entered = asyncio.Event()
+
+    async def contender() -> None:
+        async with admission.slot():
+            contender_entered.set()
+
+    next_writer = asyncio.create_task(contender())
+    await asyncio.sleep(0)
+    assert not contender_entered.is_set()
+    release.set()
+    await work
+    await next_writer
+    assert contender_entered.is_set()
+    assert await admission.drain(timeout=0) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_handler_error_and_cancellation_release_tracking(cancel: bool) -> None:
+    admission = WriteAdmission(1)
+    entered = asyncio.Event()
+
+    async def callback() -> None:
+        async with admission.handler():
+            entered.set()
+            await asyncio.Future[None]()
+
+    if cancel:
+        task = asyncio.create_task(callback())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        with pytest.raises(ValueError, match="callback failed"):
+            async with admission.handler():
+                raise ValueError("callback failed")
+    assert await admission.drain(timeout=0) is True
+
+
+@pytest.mark.parametrize("timeout", [None, -1, True, 10**400, float("nan"), float("inf"), "1"])
+def test_drain_rejects_invalid_timeout(timeout: object) -> None:
+    async def check() -> None:
+        admission = WriteAdmission(1)
+        with pytest.raises(ValueError, match="finite non-negative"):
+            await admission.drain(timeout=timeout)  # type: ignore[arg-type]
+
+    asyncio.run(check())
+
+
+def test_handler_and_drain_reject_cross_loop_reuse() -> None:
+    async def first_loop() -> WriteAdmission:
+        return WriteAdmission(1)
+
+    old = asyncio.run(first_loop())
+
+    async def next_loop() -> None:
+        with pytest.raises(RuntimeError, match="different event loop"):
+            async with old.handler():
+                pytest.fail("old lifespan tracked a handler on a new loop")
+        with pytest.raises(RuntimeError, match="different event loop"):
+            await old.drain(timeout=0)
+
+    asyncio.run(next_loop())
