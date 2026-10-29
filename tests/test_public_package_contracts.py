@@ -33,6 +33,7 @@ RUNTIME_EXPORTS = {
     "Delivery",
     "DeliveryObserver",
     "DeliveryResult",
+    "WriteAdmission",
     "Event",
     "EventValidationError",
     "ExponentialBackoff",

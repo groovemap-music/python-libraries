@@ -13,7 +13,7 @@ from an implementation module, when a name appears here.
 | --- | --- |
 | Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging` |
 | Data and diagnostics | `normalize_record`, `describe_exception` |
-| Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `run_delivery` |
+| Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `WriteAdmission`, `run_delivery` |
 | Discogs batch lifecycle | `BatchItemResult`, `BatchPolicy`, `BatchSink`, `BatchObserver`, `AsyncBatchEngine` |
 | First-party events | `Event`, `Impression`, `EventValidationError`, `event_types`, `surfaces`, `consent_purposes`, `payload_schema_for`, `is_valid_event_type`, `validate_event`, `validate_impression`, `new_event`, `new_impression` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
@@ -41,6 +41,35 @@ imports it during migration.
 single-delivery consumers. Handlers return `DeliveryResult`; `DEFER` deliberately leaves the
 delivery untouched. Concrete exception membership, validation, control state, QoS, storage, and
 metric names stay in each owner repository through its classifier and observer adapters.
+
+`WriteAdmission(capacity)` supplies one asynchronous work budget for all entity queues in a
+service process. Capacity must be a positive integer; booleans are invalid. Construct it in
+the running service loop, once per lifespan, from the consumer's PostgreSQL pool policy. Pass
+the same instance to every direct-write handler and any batch sink using that pool. Multiple
+budgets for the same pool do not compose into a shared bound. Separate processes or loops need
+their own pools and budgets; this is not a distributed limit.
+
+Wrap each whole delivery callback in `async with admission.handler():`. This scope tracks the
+callback lifetime, including nested callback scopes, without taking a database permit. Acquire
+`async with admission.slot():` immediately before entering the pool wait, and retain it until
+transaction and connection cleanup complete. Slot waiters and permit holders both count as
+active work for drain. A cancelled waiter does not consume or release another writer's
+capacity; cancellation during a write returns the slot. Enqueue, retry delays, and broker
+settlement remain outside the slot; `run_delivery` still owns single-message settlement.
+
+After stopping all delivery and background producers, the service owner can call
+`await admission.drain(timeout=CONSUMER_CANCEL_TIMEOUT)`. Drain returns `True` when all handler
+and SQL scopes exit, or `False` on timeout; it never cancels callbacks or releases permits.
+The timeout is required and must be finite and non-negative; zero gives a non-blocking idle
+probe.
+Cancellation of the drain caller propagates without canceling the tracked work. Calling drain
+inside a tracked scope includes that scope and cannot report idle until it exits. Drain only
+observes callback and SQL work: broker closure, confirmed delivery shutdown, and pool disposal
+remain service lifecycle policy.
+
+The initial published revision of this PR, `264e1d8`, named the primitive
+`DeliveryAdmission`. The reviewed API is `WriteAdmission`; this unreleased follow-up replaces
+the name without a compatibility alias so the runtime exports one canonical admission API.
 
 `process_message_with_retry` remains import-compatible during migration, but is deprecated.
 `max_retries` no longer starts an in-process retry loop: a failure is settled once for broker
