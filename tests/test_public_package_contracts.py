@@ -46,6 +46,7 @@ RUNTIME_EXPORTS = {
     "ResilientNeo4jDriver",
     "ResilientRabbitMQConnection",
     "Settlement",
+    "WriteAdmission",
     "alias_identifier_types",
     "alias_refs_for_release",
     "alias_sources",

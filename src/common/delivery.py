@@ -15,9 +15,35 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import AsyncIterator, Awaitable, Callable
     from contextlib import AbstractContextManager
     from types import TracebackType
+
+
+class WriteAdmission:
+    """One event-loop-owned database work budget shared by all service queues.
+
+    Construct once per service lifespan in its running loop. Callers supply the
+    pool-sized capacity and enter :meth:`slot` before acquiring a connection.
+    """
+
+    def __init__(self, capacity: int) -> None:
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity <= 0:
+            raise ValueError("write admission capacity must be a positive integer")
+        self._loop = asyncio.get_running_loop()
+        self._semaphore = asyncio.BoundedSemaphore(capacity)
+
+    @contextlib.asynccontextmanager
+    async def slot(self) -> AsyncIterator[None]:
+        """Bound actual work, releasing on success, exception, or cancellation.
+
+        Waiting cancellation never releases a permit it did not acquire. A fresh
+        context is required for each attempt; enqueue and retry delays stay outside.
+        """
+        if asyncio.get_running_loop() is not self._loop:
+            raise RuntimeError("write admission belongs to a different event loop; create one for this lifespan")
+        async with self._semaphore:
+            yield
 
 
 class Settlement(StrEnum):
