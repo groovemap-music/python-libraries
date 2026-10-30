@@ -7,13 +7,14 @@ published distributions:
 
 | Distribution | Statements | Covered | Coverage |
 | --- | ---: | ---: | ---: |
-| `groovemap-runtime` | 2,363 | 2,200 | 93.10% |
+| `groovemap-runtime` | 3,035 | 2,897 | 95.45% |
 | `groovemap-agent-tools` | 118 | 117 | 99.15% |
-| **Aggregate** | **2,481** | **2,317** | **93.39%** |
+| **Aggregate** | **3,153** | **3,014** | **95.59%** |
 
-The baseline was measured at `66b65dc` with Python 3.14.7: 638 tests passed and two live
-integration tests were deselected. The enforced floor is **93%**, the whole-percent floor of
-the measured aggregate. Coverage reports retain two decimal places so drift is visible before
+The table was last measured at `d5ea9d5` with Python 3.14.7: 972 tests passed, four were
+skipped, and two live integration tests were deselected. The enforced floor is still **93%**.
+It was set from the first baseline, which measured 93.39%, and has not been raised since the
+aggregate reached 95.59%. Coverage reports retain two decimal places so drift is visible before
 it reaches the gate.
 
 Both `just check` and the reusable CI workflow execute this aggregate coverage command. The
