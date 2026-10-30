@@ -274,7 +274,10 @@ def setup_logging(
         service_name: Name of the service for logging context
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
                If None, reads from LOG_LEVEL environment variable, defaults to INFO.
-        log_file: Optional file path for logging output. File output rotates at
+        log_file: Optional file path for logging output. The ``LOG_FILE``
+                  environment variable overrides it when set (empty disables file
+                  logging). If the file cannot be opened, logging continues on the
+                  console with a single warning. File output rotates at
                   ``LOG_FILE_MAX_BYTES`` (100 MiB by default), retaining
                   ``LOG_FILE_BACKUP_COUNT`` backups (5 by default).
 
@@ -367,21 +370,30 @@ def setup_logging(
     )
     handlers.append(console_handler)
 
-    # File handler if specified
+    # File handler: LOG_FILE overrides the argument ("" disables file logging).
+    # An unusable path degrades to console-only with one warning, never a crash.
+    log_file_env = getenv("LOG_FILE")
+    if log_file_env is not None:
+        log_file = Path(log_file_env.strip()) if log_file_env.strip() else None
+    file_handler_failure: tuple[Path, OSError] | None = None
     if log_file:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = build_rotating_file_handler(log_file)
-        file_handler.setFormatter(
-            structlog.stdlib.ProcessorFormatter(
-                foreign_pre_chain=shared_processors,
-                processors=[
-                    structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                    structlog.processors.dict_tracebacks,
-                    structlog.processors.JSONRenderer(serializer=orjson_serializer),
-                ],
+        try:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = build_rotating_file_handler(log_file)
+        except OSError as exc:
+            file_handler_failure = (log_file, exc)
+        else:
+            file_handler.setFormatter(
+                structlog.stdlib.ProcessorFormatter(
+                    foreign_pre_chain=shared_processors,
+                    processors=[
+                        structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                        structlog.processors.dict_tracebacks,
+                        structlog.processors.JSONRenderer(serializer=orjson_serializer),
+                    ],
+                )
             )
-        )
-        handlers.append(file_handler)
+            handlers.append(file_handler)
 
     # Configure root logger
     logging.basicConfig(
@@ -394,6 +406,13 @@ def setup_logging(
         logging.getLogger(__name__).warning(
             "⚠️ Unrecognized LOG_LEVEL %r; falling back to INFO",
             invalid_level_value,
+        )
+
+    if file_handler_failure is not None:
+        logging.getLogger(__name__).warning(
+            "⚠️ Cannot write log file %s (%s); continuing with console logging only",
+            file_handler_failure[0],
+            file_handler_failure[1],
         )
 
     # Suppress verbose pika logs
