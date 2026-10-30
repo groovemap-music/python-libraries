@@ -2,14 +2,10 @@
 
 import logging
 from logging.handlers import RotatingFileHandler
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -649,3 +645,38 @@ class TestLogSqlExplainResult:
         assert "EXPLAIN (after error) for SQL query:" in content
         assert "SELECT * FROM bad_table" in content
         assert "Original error: RuntimeError: relation does not exist" in content
+
+
+class TestProfilingLogFallback:
+    """Profiling log path is configurable and failure to open it is non-fatal."""
+
+    def test_env_overrides_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        custom = tmp_path / "sub" / "custom.log"
+        monkeypatch.setenv("PROFILING_LOG_FILE", str(custom))
+        from common.query_debug import get_profiling_logger
+
+        logger = get_profiling_logger()
+        logger.info("hello-profile")
+        for h in logger.handlers:
+            h.flush()
+
+        assert "hello-profile" in custom.read_text()
+
+    def test_empty_env_disables_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PROFILING_LOG_FILE", "")
+        from common.query_debug import get_profiling_logger
+
+        assert get_profiling_logger().handlers == []
+
+    def test_unwritable_path_warns_once_and_does_not_raise(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+        monkeypatch.delenv("PROFILING_LOG_FILE", raising=False)
+        bad = Path("/nonexistent-root-dir/profiling.log")
+        from common.query_debug import get_profiling_logger
+
+        with patch("common.query_debug.PROFILING_LOG_PATH", bad), caplog.at_level(logging.WARNING):
+            logger = get_profiling_logger()
+            get_profiling_logger()
+            logger.info("dropped")
+
+        assert logger.handlers == []
+        assert len([r for r in caplog.records if str(bad) in r.getMessage()]) == 1
