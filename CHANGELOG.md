@@ -28,6 +28,7 @@ project uses [Semantic Versioning](https://semver.org/).
 - Make `setup_logging`'s log file configurable and non-fatal: `LOG_FILE` overrides the
   `log_file` argument (empty disables the file sink), and an unwritable path falls back to
   console logging with a single warning instead of crashing the service at startup.
+  The query-profiling log gets the same treatment via `PROFILING_LOG_FILE`.
 - Bound `setup_logging`'s file sink and the `query_debug` profiling logger to a
   `RotatingFileHandler` instead of an unbounded `FileHandler`, so every consumer's
   application-written `/logs` file rolls over at `LOG_FILE_MAX_BYTES` (default 100 MiB)
