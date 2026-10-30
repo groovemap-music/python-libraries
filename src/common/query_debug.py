@@ -103,14 +103,30 @@ def get_profiling_logger() -> logging.Logger:
             # Remove any existing handlers to avoid duplicates
             logger.handlers.clear()
 
-            # Ensure log directory exists
-            PROFILING_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            # PROFILING_LOG_FILE overrides the default path ("" disables the file).
+            # An unusable path leaves the logger handler-less (profiling output is
+            # dropped) with one warning, rather than crashing query profiling.
+            path_env = os.environ.get("PROFILING_LOG_FILE")
+            if path_env is None:
+                log_path: Path | None = PROFILING_LOG_PATH
+            else:
+                log_path = Path(path_env.strip()) if path_env.strip() else None
 
-            handler = build_rotating_file_handler(PROFILING_LOG_PATH)
-            handler.setLevel(logging.DEBUG)
-            formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
+            if log_path is not None:
+                try:
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    handler = build_rotating_file_handler(log_path)
+                except OSError as exc:
+                    _logger.warning(
+                        "⚠️ Cannot write profiling log %s (%s); profiling output will be discarded",
+                        log_path,
+                        exc,
+                    )
+                else:
+                    handler.setLevel(logging.DEBUG)
+                    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+                    handler.setFormatter(formatter)
+                    logger.addHandler(handler)
 
             _profiling_logger = logger
 
