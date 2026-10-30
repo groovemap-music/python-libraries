@@ -31,9 +31,9 @@ be documented for at least one minor release before removal when practical.
 No version has been released or tagged yet, so consumers pin an immutable commit together with
 the exact version (`groovemap-runtime==<version>`), as shown in the
 [README](../README.md#use-the-libraries-in-a-service). Once releases exist, pin a released
-version; a commit pin is then only for validating an unreleased migration. Local development linking belongs
-in an explicit uv source and must never place credentials in dependency URLs, manifests,
-lockfiles, Docker arguments, or image layers.
+version; a commit pin is then only for validating an unreleased migration. Local development
+linking belongs in an explicit uv source and must never place credentials in dependency URLs,
+manifests, lockfiles, Docker arguments, or image layers.
 
 ## Release process
 

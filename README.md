@@ -6,7 +6,7 @@ two independently buildable distributions with one synchronized version:
 
 | Distribution | Import surface | Responsibility |
 | --- | --- | --- |
-| `groovemap-runtime` | `common` | Health, logging, telemetry, normalization, retries, message delivery, database and message-broker resilience, and the shared media, identity, event, and identifier helpers |
+| `groovemap-runtime` | `common` | Health server, logging, telemetry; normalization; retries and delivery; database and broker resilience; media, identity, event, and identifier helpers |
 | `groovemap-agent-tools` | `common.agent_tools` | Framework-neutral catalog query tools used by the API and MCP server |
 
 The runtime's base install is dependency-light. An extra is an optional dependency group, such

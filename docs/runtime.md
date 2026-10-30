@@ -82,9 +82,12 @@ purge or maintenance policy. Transient failures retain original order without se
 deterministic failures shrink toward `min_batch_size` and reject only at the poison threshold;
 bounded drain failure retains work for `run_periodic`.
 
-Both contracts are present from immutable revision `f634851bb7f4598bd6a2b928b95e829f064cdd8f`
-onward. Consumers pin an immutable revision at or after it, never a moving branch, and record
-that revision in their dependency lock.
+The delivery lifecycle, the batch engine, and `WriteAdmission` with its `handler()`, `slot()`,
+and bounded `drain()` are all present from immutable revision
+`d5ea9d5d243d1a55492b3a4af2b9469f8ba81242` onward. `WriteAdmission` first appeared in an
+earlier revision, but only this one has the shared loop-owned admission and bounded drain
+described above. Consumers pin an immutable revision at or after it, never a moving branch, and
+record that revision in their dependency lock.
 
 ## Optional capabilities
 
@@ -109,9 +112,9 @@ base dependencies and would otherwise be missing a newly added one at runtime.
 
 The configuration helpers deliberately remain small:
 
-- `_build_valkey_url()` is a private helper that services still import during migration. It reads `VALKEY_HOST`, `VALKEY_PORT`, `VALKEY_PASSWORD`, and
-  `VALKEY_PASSWORD_FILE` only. A nonempty
-  `VALKEY_PASSWORD_FILE` path wins over `VALKEY_PASSWORD`, an unreadable file fails,
+- `_build_valkey_url()` is a private helper that services still import during migration. It
+  reads `VALKEY_HOST`, `VALKEY_PORT`, `VALKEY_PASSWORD`, and `VALKEY_PASSWORD_FILE` only. A
+  nonempty `VALKEY_PASSWORD_FILE` path wins over `VALKEY_PASSWORD`, an unreadable file fails,
   and an empty password disables authentication. Defaults are `localhost:6379` and
   database 0.
 
