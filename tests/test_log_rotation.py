@@ -2,6 +2,7 @@
 
 import logging
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -14,8 +15,6 @@ from common.log_rotation import (
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
 
 
@@ -75,3 +74,48 @@ def test_setup_logging_uses_shared_rotating_handler(tmp_path: Path) -> None:
     build_handler.assert_called_once_with(log_file)
     assert handler in basic_config.call_args.kwargs["handlers"]
     handler.close()
+
+
+def _file_handlers() -> list[logging.Handler]:
+    return [h for h in logging.getLogger().handlers if isinstance(h, RotatingFileHandler)]
+
+
+def test_unwritable_log_file_falls_back_to_console(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """An unusable path keeps console logging and warns exactly once."""
+    monkeypatch.delenv("LOG_FILE", raising=False)
+    bad = "/nonexistent-root-dir/x.log"
+
+    setup_logging("fallback-test", log_file=Path(bad))
+    logging.getLogger("probe").info("console-still-works")
+
+    assert _file_handlers() == []
+    out = capsys.readouterr().out
+    assert "console-still-works" in out
+    warnings_ = [line for line in out.splitlines() if '"level":"warning"' in line and bad in line]
+    assert len(warnings_) == 1
+
+
+def test_log_file_env_overrides_argument(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """LOG_FILE wins over the log_file argument."""
+    custom = tmp_path / "custom.log"
+    arg = tmp_path / "arg.log"
+    monkeypatch.setenv("LOG_FILE", str(custom))
+
+    setup_logging("env-test", log_file=arg)
+    logging.getLogger("probe").info("hello-custom")
+    for handler in _file_handlers():
+        handler.flush()
+
+    assert "hello-custom" in custom.read_text()
+    assert not arg.exists()
+
+
+def test_empty_log_file_env_disables_file_handler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """LOG_FILE= disables file logging even when an argument is given."""
+    arg = tmp_path / "arg.log"
+    monkeypatch.setenv("LOG_FILE", "")
+
+    setup_logging("empty-env-test", log_file=arg)
+
+    assert _file_handlers() == []
+    assert not arg.exists()
