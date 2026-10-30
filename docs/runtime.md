@@ -132,6 +132,15 @@ The configuration helpers deliberately remain small:
   `"environment":"development"` at whatever level `LOG_LEVEL` resolves to (`INFO` by default);
   that value is cosmetic and is not evidence of a debug-verbosity logging path. Verbosity is
   controlled exclusively by `LOG_LEVEL` (or the `level` argument).
+- `LOG_FILE` overrides the `log_file` argument when set to a path; `LOG_FILE=` (empty) disables
+  file logging entirely. If the log file's directory cannot be created or the file cannot be
+  opened (for example `/logs` outside a container), `setup_logging` keeps console logging, skips
+  the file handler, and emits exactly one `WARNING` naming the path and the error instead of
+  crashing, so services run locally with no manual `/logs` setup.
+- The query-profiling log (`common.query_debug`) defaults to `/logs/profiling.log`.
+  `PROFILING_LOG_FILE` overrides the path and `PROFILING_LOG_FILE=` (empty) disables the file.
+  If it cannot be opened, one `WARNING` is logged and profiling output is discarded instead of
+  raising.
 - When `log_file` is given, the file sink is a `RotatingFileHandler` (via
   `common.log_rotation.build_rotating_file_handler`), not an unbounded `FileHandler`.
   `LOG_FILE_MAX_BYTES` (default `104857600`, 100 MiB) caps the active file before it rolls
