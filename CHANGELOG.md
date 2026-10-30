@@ -7,6 +7,10 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Add `common.WriteAdmission`: one event-loop-owned budget for database writes, with
+  `handler()` and `slot()` scopes that count active work and a bounded `drain(timeout=...)`
+  for shutdown. Drain never cancels callbacks or releases permits.
+
 - **BREAKING:** `common.agent_tools.discovery.search` now takes `valkey=` and forwards it to
   `search_fn` under the `"valkey"` key, replacing the previous keyword. There is no
   compatibility alias; downstream callers must pass `valkey=` after bumping to this

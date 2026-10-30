@@ -1,16 +1,17 @@
 # GrooveMap Python libraries
 
-MIT-licensed Python libraries shared by GrooveMap services. The `python-libraries`
-repository owns two independently buildable distributions with one synchronized version:
+MIT-licensed Python libraries shared by GrooveMap services. This repository is for engineers who
+build or maintain a GrooveMap service, and for contributors to the libraries themselves. It owns
+two independently buildable distributions with one synchronized version:
 
 | Distribution | Import surface | Responsibility |
 | --- | --- | --- |
-| `groovemap-runtime` | `common` | Health, logging, normalization, retries, and database/message-broker resilience |
+| `groovemap-runtime` | `common` | Health, logging, telemetry, normalization, retries, message delivery, database and message-broker resilience, and the shared media, identity, event, and identifier helpers |
 | `groovemap-agent-tools` | `common.agent_tools` | Framework-neutral catalog query tools used by the API and MCP server |
 
-The runtime's base install is dependency-light. Consumers select the `metrics`, `neo4j`,
-`otel`, `otel-http`, `postgres`, or `rabbitmq` extra they need. `all` is intended for
-development and validation.
+The runtime's base install is dependency-light. An extra is an optional dependency group, such
+as `groovemap-runtime[postgres]`. Consumers select the `metrics`, `neo4j`, `otel`, `otel-http`,
+`postgres`, or `rabbitmq` extra they need. `all` is intended for development and validation.
 Service-specific behavior, OAuth, deployment policy, credentials, and extraction state remain
 the responsibility of each consuming application.
 
@@ -26,6 +27,36 @@ The supported interpreter line is Python 3.14, pinned to Python 3.14.7 in CI. Ne
 distribution installs a console command. See the local package contracts for the complete
 [runtime API](docs/runtime.md), [agent-tools API](docs/agent-tools.md), and
 [compatibility and release policy](docs/compatibility-and-releases.md).
+
+## Use the libraries in a service
+
+Nothing is published to a package registry yet. Consumers depend on an immutable commit of this
+repository, plus the exact version, in their `pyproject.toml`:
+
+```toml
+[project]
+dependencies = [
+    "groovemap-agent-tools==<version>",
+    "groovemap-runtime[otel,postgres]==<version>",
+]
+
+[tool.uv.sources]
+groovemap-runtime = { git = "https://github.com/groovemap-music/python-libraries.git", rev = "<commit-sha>" }
+groovemap-agent-tools = { git = "https://github.com/groovemap-music/python-libraries.git", subdirectory = "agent-tools", rev = "<commit-sha>" }
+```
+
+Replace `<version>` with the version in this repository's `pyproject.toml` and `<commit-sha>`
+with the full commit hash to pin. Run `uv lock` to record the resolved commit, then import from
+`common`:
+
+```python
+from common import setup_logging
+
+setup_logging("my-service")
+```
+
+No credentials are needed. Read [the compatibility policy](docs/compatibility-and-releases.md)
+before raising a pin.
 
 ## Valkey connection settings
 
@@ -67,7 +98,15 @@ tags, pushes, or changes repository visibility.
 The default `just test` and `just check` paths exclude tests marked `integration` and never
 contact a broker. `just test-integration` runs `tests/test_rabbitmq_integration.py`; without
 `RABBITMQ_HOST` it reports those live-broker tests as skipped. To run them locally, provide a
-reachable RabbitMQ 4 management broker and the documented `RABBITMQ_*` test settings.
+reachable RabbitMQ 4 management broker and set these variables:
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `RABBITMQ_HOST` | Broker host; the tests are skipped while it is unset | unset |
+| `RABBITMQ_USERNAME` | Broker user | `groovemap` |
+| `RABBITMQ_PASSWORD` | Broker password | `groovemap` |
+| `RABBITMQ_AMQP_PORT` | AMQP port | `5672` |
+| `RABBITMQ_MGMT_PORT` | Management API port | `15672` |
 
 CI provisions a digest-pinned RabbitMQ 4 management container, waits for broker readiness,
 and passes `just test-integration` through the reusable workflow's integration command. That
@@ -85,101 +124,37 @@ and release rehearsal and writes an ignored, deterministic attestation to `dist/
 [publication-readiness guide](docs/publication-readiness.md) lists the visibility, anonymous-fetch,
 credential-removal, and package-release approvals that remain external to repository validation.
 
-## Vendored media taxonomy
+## Vendored design vocabularies
 
-`groovemap-runtime` ships the canonical media taxonomy that [ADR 0007 in the `design`
-repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0007-canonical-media-taxonomy.md)
-makes authoritative for every GrooveMap service. `src/common/media_taxonomy/media-taxonomy.json`
-is vendored verbatim, byte for byte, from `taxonomy/media/v1/media-taxonomy.json` in the
-`design` repository; it ships as package data inside the `groovemap-runtime` wheel and is not
-edited in this repository. `src/common/media_taxonomy/source.json` beside it records the
-source commit and the vendored file's SHA-256 digest. `just check` runs
-`scripts/check-media-taxonomy.py`, which recomputes that digest and fails if it differs from
-`source.json` or if either file is missing — a drift means the vendored copy is stale.
+The `design` repository is the source of truth for five shared vocabularies. This repository
+vendors them: it ships a verbatim, byte-for-byte copy as package data inside the
+`groovemap-runtime` wheel, and never edits that copy. A `source.json` beside each copy records
+the `design` commit and the SHA-256 digest of every vendored file. Where a vocabulary has
+conformance fixtures, the fixtures at the same commit are vendored into `tests/fixtures/` with
+their own `source.json`.
 
-To re-vendor after an upstream change: copy the new file from the reviewed `design` commit,
-recompute its digest (`shasum -a 256 src/common/media_taxonomy/media-taxonomy.json`), and
-update `source.json`'s `commit` and `sha256` fields to match. The same vocabulary is vendored
-the same way into `discogs-ingestion` and `musicbrainz-ingestion`; keep all three in step with
-the same reviewed `design` commit.
+| Vocabulary | Governing ADR | Upstream directory in `design` | Vendored copy | Fixtures | Check script |
+| --- | --- | --- | --- | --- | --- |
+| Media taxonomy | [ADR 0007](https://github.com/groovemap-music/design/blob/main/docs/adr/0007-canonical-media-taxonomy.md) | `taxonomy/media/v1/` (`media-taxonomy.json`) | `src/common/media_taxonomy/` | `tests/fixtures/media/` (not digest-checked) | `scripts/check-media-taxonomy.py` |
+| Identity vocabulary | [ADR 0009](https://github.com/groovemap-music/design/blob/main/docs/adr/0009-native-identity-and-provider-aliases.md) | `taxonomy/identity/v1/` (`identity-vocabulary.json`) | `src/common/identity_vocabulary/` | none | `scripts/check-identity-vocabulary.py` |
+| Event vocabulary | [ADR 0010](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md) | `taxonomy/events/v1/` (`event-types.json`, `event-envelope.schema.json`, `impression.schema.json`) | `src/common/event_vocabulary/` | `tests/fixtures/events/` | `scripts/check-event-vocabulary.py` |
+| Identifier vocabulary | [ADR 0011](https://github.com/groovemap-music/design/blob/main/docs/adr/0011-catalog-identifiers-and-manufacturing-credits.md) | `taxonomy/identifiers/v1/` (`identifier-types.json`, `identifier-types.schema.json`, `identifier-block.schema.json`) | `src/common/identifier_vocabulary/` | `tests/fixtures/identifiers/` | `scripts/check-identifier-vocabulary.py` |
+| Company-role vocabulary | ADR 0011 | `taxonomy/company-roles/v1/` (`company-roles.json`, `company-roles.schema.json`, `company-block.schema.json`) | `src/common/company_role_vocabulary/` | `tests/fixtures/company-roles/` | `scripts/check-company-role-vocabulary.py` |
 
-## Vendored identity vocabulary
+`just check` runs every check script. Each recomputes the recorded digests and fails if one
+differs or a file is missing. A failure means a vendored copy is stale.
 
-`groovemap-runtime` ships the canonical identity vocabulary that [ADR 0009 in the `design`
-repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0009-native-identity-and-provider-aliases.md)
-makes authoritative for every GrooveMap service. `src/common/identity_vocabulary/identity-vocabulary.json`
-is vendored verbatim, byte for byte, from `taxonomy/identity/v1/identity-vocabulary.json` in
-the `design` repository; it ships as package data inside the `groovemap-runtime` wheel and is
-not edited in this repository. `src/common/identity_vocabulary/source.json` beside it records
-the source commit and, per vendored file, its path and SHA-256 digest. `just check` runs
-`scripts/check-identity-vocabulary.py`, which recomputes each digest and fails if it differs
-from `source.json` or if the file is missing — a drift means the vendored copy is stale.
+To re-vendor after an upstream change:
 
-To re-vendor after an upstream change: copy the new file from the reviewed `design` commit,
-recompute its digest (`shasum -a 256 src/common/identity_vocabulary/identity-vocabulary.json`),
-and update `source.json`'s `commit` and the file's `sha256` field to match.
+1. Copy every changed file from the reviewed `design` commit.
+2. Recompute each digest, for example
+   `shasum -a 256 src/common/media_taxonomy/media-taxonomy.json`.
+3. Update the `commit` and `sha256` fields in the matching `source.json`. The media taxonomy
+   has one top-level `sha256`; the other vocabularies list a `sha256` per entry under `files`.
+4. Run `just check`.
 
-## Vendored event vocabulary
-
-`groovemap-runtime` ships the canonical event vocabulary and JSON Schemas that [ADR 0010 in
-the `design`
-repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md)
-makes authoritative for every GrooveMap service. `src/common/event_vocabulary/event-types.json`,
-`event-envelope.schema.json`, and `impression.schema.json` are vendored verbatim, byte for
-byte, from `taxonomy/events/v1/` in the `design` repository; they ship as package data inside
-the `groovemap-runtime` wheel and are not edited in this repository.
-`src/common/event_vocabulary/source.json` beside them records the source commit and, per
-vendored file, its path and SHA-256 digest. The conformance fixtures under
-`taxonomy/events/v1/fixtures/` at the same commit are vendored the same way into
-`tests/fixtures/events/`, with their own `source.json`. `just check` runs
-`scripts/check-event-vocabulary.py`, which recomputes every recorded digest across both
-`source.json` files and fails if any differs or if any file is missing — a drift means a
-vendored copy is stale.
-
-To re-vendor after an upstream change: copy every changed file from the reviewed `design`
-commit, recompute each digest (`shasum -a 256 <file>`), and update the relevant `source.json`'s
-`commit` and per-file `sha256` fields to match.
-
-## Vendored identifier vocabulary
-
-`groovemap-runtime` ships the canonical identifier vocabulary and block schema that [ADR 0011
-in the `design`
-repository](https://github.com/groovemap-music/design/blob/main/docs/adr/0011-catalog-identifiers-and-manufacturing-credits.md)
-makes authoritative for every GrooveMap service.
-`src/common/identifier_vocabulary/identifier-types.json`, `identifier-types.schema.json`, and
-`identifier-block.schema.json` are vendored verbatim, byte for byte, from
-`taxonomy/identifiers/v1/` in the `design` repository; they ship as package data inside the
-`groovemap-runtime` wheel and are not edited in this repository.
-`src/common/identifier_vocabulary/source.json` beside them records the source commit and, per
-vendored file, its path and SHA-256 digest. The conformance fixtures under
-`taxonomy/identifiers/v1/fixtures/` at the same commit are vendored the same way into
-`tests/fixtures/identifiers/`, with their own `source.json`. `just check` runs
-`scripts/check-identifier-vocabulary.py`, which recomputes every recorded digest across both
-`source.json` files and fails if any differs or if any file is missing — a drift means a
-vendored copy is stale.
-
-To re-vendor after an upstream change: copy every changed file from the reviewed `design`
-commit, recompute each digest (`shasum -a 256 <file>`), and update the relevant `source.json`'s
-`commit` and per-file `sha256` fields to match.
-
-## Vendored company-role vocabulary
-
-`groovemap-runtime` ships the canonical company-role vocabulary and block schema that the same
-ADR 0011 makes authoritative. `src/common/company_role_vocabulary/company-roles.json`,
-`company-roles.schema.json`, and `company-block.schema.json` are vendored verbatim, byte for
-byte, from `taxonomy/company-roles/v1/` in the `design` repository; they ship as package data
-inside the `groovemap-runtime` wheel and are not edited in this repository.
-`src/common/company_role_vocabulary/source.json` beside them records the source commit and, per
-vendored file, its path and SHA-256 digest. The conformance fixtures under
-`taxonomy/company-roles/v1/fixtures/` at the same commit are vendored the same way into
-`tests/fixtures/company-roles/`, with their own `source.json`. `just check` runs
-`scripts/check-company-role-vocabulary.py`, which recomputes every recorded digest across both
-`source.json` files and fails if any differs or if any file is missing — a drift means a
-vendored copy is stale.
-
-To re-vendor after an upstream change: copy every changed file from the reviewed `design`
-commit, recompute each digest (`shasum -a 256 <file>`), and update the relevant `source.json`'s
-`commit` and per-file `sha256` fields to match.
+The media taxonomy is also vendored the same way into `discogs-ingestion` and
+`musicbrainz-ingestion`. Keep all three in step with the same reviewed `design` commit.
 
 ## License and history
 

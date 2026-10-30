@@ -67,9 +67,8 @@ inside a tracked scope includes that scope and cannot report idle until it exits
 observes callback and SQL work: broker closure, confirmed delivery shutdown, and pool disposal
 remain service lifecycle policy.
 
-The initial published revision of this PR, `264e1d8`, named the primitive
-`DeliveryAdmission`. The reviewed API is `WriteAdmission`; this unreleased follow-up replaces
-the name without a compatibility alias so the runtime exports one canonical admission API.
+`WriteAdmission` is the only admission API. An earlier unreleased revision called it
+`DeliveryAdmission`; that name was removed without an alias.
 
 `process_message_with_retry` remains import-compatible during migration, but is deprecated.
 `max_retries` no longer starts an in-process retry loop: a failure is settled once for broker
@@ -108,9 +107,9 @@ base dependencies and would otherwise be missing a newly added one at runtime.
 
 ## Configuration boundary
 
-The stable configuration functions deliberately remain small:
+The configuration helpers deliberately remain small:
 
-- `_build_valkey_url()` reads `VALKEY_HOST`, `VALKEY_PORT`, `VALKEY_PASSWORD`, and
+- `_build_valkey_url()` is a private helper that services still import during migration. It reads `VALKEY_HOST`, `VALKEY_PORT`, `VALKEY_PASSWORD`, and
   `VALKEY_PASSWORD_FILE` only. A nonempty
   `VALKEY_PASSWORD_FILE` path wins over `VALKEY_PASSWORD`, an unreadable file fails,
   and an empty password disables authentication. Defaults are `localhost:6379` and

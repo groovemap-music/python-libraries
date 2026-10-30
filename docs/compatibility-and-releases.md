@@ -28,8 +28,10 @@ Implementation submodules, leading-underscore helpers, deployment policy, consum
 resolver implementations, and application behavior are outside this promise. Deprecations should
 be documented for at least one minor release before removal when practical.
 
-Consumers should pin a released version. An immutable commit is acceptable while validating an
-unreleased migration, but it is not a substitute for a release. Local development linking belongs
+No version has been released or tagged yet, so consumers pin an immutable commit together with
+the exact version (`groovemap-runtime==<version>`), as shown in the
+[README](../README.md#use-the-libraries-in-a-service). Once releases exist, pin a released
+version; a commit pin is then only for validating an unreleased migration. Local development linking belongs
 in an explicit uv source and must never place credentials in dependency URLs, manifests,
 lockfiles, Docker arguments, or image layers.
 
@@ -49,8 +51,8 @@ keeps both versions synchronized.
    or equivalently narrow identity.
 
 `just bump` does not commit, tag, push, publish, or release. Registry publication remains disabled
-until a separately approved package release enables it. Package publication, Git tags, pushes, and repository visibility changes always
-require their own approval.
+until a separately approved package release enables it. Package publication, Git tags, pushes,
+and repository visibility changes always require their own approval.
 
 A version bump is a coordinated step, not a per-change one. Every consumer in the compatibility
 matrix requires an exact version (`groovemap-runtime==<version>`) alongside its immutable commit
