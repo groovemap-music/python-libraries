@@ -104,6 +104,8 @@ RUNTIME_EXPORTS = {
     "validate_event",
     "validate_identifiers_block",
     "validate_impression",
+    "valkey_key",
+    "valkey_pattern",
     "with_async_neo4j_retry",
     "with_neo4j_retry",
 }

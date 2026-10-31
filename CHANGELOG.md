@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Add Valkey namespacing and database selection. `VALKEY_DB` (integer `0..255`, blank is 0)
+  is now honored by the new public `common.config.get_valkey_url()` and by
+  `_build_valkey_url()`, which remains as a compatible alias; with `VALKEY_DB` unset the URL is
+  unchanged (`/0`), and an invalid value raises `ValueError`. New `VALKEY_KEY_PREFIX` plus
+  `common.valkey_key(*parts)`, `common.valkey_pattern(pattern)` and
+  `common.config.valkey_key_prefix()` / `valkey_db()` let services share one Valkey safely.
+  Default decision: the prefix is `groovemap:` when unset (an explicit empty value disables
+  it), so dedicated and shared deployments behave alike. Nothing changes for a service until it
+  routes its keys through the helpers; when it does, long-lived keys (`revoked:jti:*`,
+  `password_changed:*`, `2fa_challenge:*`, OAuth state, the insights generation counter) are
+  stranded under their old names, so an already-running deployment should set
+  `VALKEY_KEY_PREFIX=` (empty) or accept the window. Prefix characters are limited to
+  letters, digits and `_-.:` so SCAN patterns cannot be widened.
+
 - Add `common.WriteAdmission`: one event-loop-owned budget for database writes, with
   `handler()` and `slot()` scopes that count active work and a bounded `drain(timeout=...)`
   for shutdown. Drain never cancels callbacks or releases permits.

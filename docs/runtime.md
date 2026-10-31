@@ -11,7 +11,7 @@ from an implementation module, when a name appears here.
 
 | Capability | Stable names |
 | --- | --- |
-| Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging` |
+| Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging`, `valkey_key`, `valkey_pattern` |
 | Data and diagnostics | `normalize_record`, `describe_exception` |
 | Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `WriteAdmission`, `run_delivery` |
 | Discogs batch lifecycle | `BatchItemResult`, `BatchPolicy`, `BatchSink`, `BatchObserver`, `AsyncBatchEngine` |
@@ -112,11 +112,36 @@ base dependencies and would otherwise be missing a newly added one at runtime.
 
 The configuration helpers deliberately remain small:
 
-- `_build_valkey_url()` is a private helper that services still import during migration. It
-  reads `VALKEY_HOST`, `VALKEY_PORT`, `VALKEY_PASSWORD`, and `VALKEY_PASSWORD_FILE` only. A
-  nonempty `VALKEY_PASSWORD_FILE` path wins over `VALKEY_PASSWORD`, an unreadable file fails,
-  and an empty password disables authentication. Defaults are `localhost:6379` and
-  database 0.
+- `common.config.get_valkey_url()` (also reachable by its older private name
+  `_build_valkey_url()`, which services still import) reads `VALKEY_HOST`, `VALKEY_PORT`,
+  `VALKEY_PASSWORD`, `VALKEY_PASSWORD_FILE` and `VALKEY_DB`. A nonempty
+  `VALKEY_PASSWORD_FILE` path wins over `VALKEY_PASSWORD`, an unreadable file fails, and an
+  empty password disables authentication. Defaults are `localhost:6379` and database 0.
+  `VALKEY_DB` must be an integer in `0..255` (blank means 0); anything else raises
+  `ValueError` rather than silently using database 0.
+- `valkey_key(*parts)` returns the configured prefix plus the parts joined by `:`, and
+  `valkey_pattern(pattern)` prefixes a SCAN/KEYS glob so a sweep cannot leave the namespace.
+  Use both for every key a service writes, reads, deletes or scans, for example
+  `valkey.setex(valkey_key("revoked:jti", jti), ttl, "1")` and
+  `valkey.scan(cursor, match=valkey_pattern("insights:g*"))`. The helpers are plain string
+  functions, not a client wrapper, so they work with any client, pipeline or script, and the
+  call site still shows the exact key. Keys read from SCAN results already include the
+  prefix; do not prefix them again.
+- `VALKEY_KEY_PREFIX` sets the namespace. Unset means `groovemap:`; a trailing `:` is added
+  if missing; an explicitly empty value disables prefixing. Only letters, digits and
+  `_-.:` are accepted, because the prefix is embedded in glob patterns and `*?[]\` would
+  widen a scan. `valkey_key_prefix()` returns the resolved value.
+
+  Default decision: `groovemap:` is on by default, including for dedicated stacks, so that
+  a stack moved onto a shared Valkey never collides with another application (Discogsography
+  uses the same key lineage, for example `discogs:oauth:state:`). Most keys are TTL caches
+  that repopulate. Switching an existing deployment to prefixed keys strands long-lived
+  state under the old names: `revoked:jti:*` (a revoked token becomes valid again until it
+  expires), `password_changed:*`, `2fa_challenge:*`, in-flight OAuth state, and the
+  insights generation counter. A service adopting these helpers on an already-running
+  stack should either set `VALKEY_KEY_PREFIX=` (empty) to keep its current keys, or accept
+  the window and roll out at a quiet moment. Fresh and shared-instance deployments need no
+  action.
 
 - `parse_postgres_host_port(value, default_port=5432)` parses host, embedded-port, and IPv6
   forms without reading application settings.
