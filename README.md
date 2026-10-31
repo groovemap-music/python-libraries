@@ -60,11 +60,17 @@ before raising a pin.
 
 ## Valkey connection settings
 
-`common.config._build_valkey_url()` reads `VALKEY_HOST` (default `localhost`),
-`VALKEY_PORT` (default `6379`), `VALKEY_PASSWORD`, and `VALKEY_PASSWORD_FILE`.
-It returns `valkey://` URLs for database 0, quotes passwords, and omits the
-authentication segment when no password is set. A nonempty password file path
-wins over the plain password; an unreadable file raises an error.
+`common.config.get_valkey_url()` (alias `_build_valkey_url()`) reads `VALKEY_HOST`
+(default `localhost`), `VALKEY_PORT` (default `6379`), `VALKEY_PASSWORD`,
+`VALKEY_PASSWORD_FILE` and `VALKEY_DB` (default `0`, range `0..255`). It returns
+`valkey://` URLs, quotes passwords, and omits the authentication segment when no password is
+set. A nonempty password file path wins over the plain password; an unreadable file raises
+an error.
+
+`VALKEY_KEY_PREFIX` (default `groovemap:`; empty disables) namespaces keys on a shared
+instance. Build keys with `common.valkey_key(*parts)` and SCAN/KEYS globs with
+`common.valkey_pattern(pattern)`. See [the runtime contract](docs/runtime.md) for the
+default-prefix decision and the rollout note for existing deployments.
 
 Only `VALKEY_*` variables are read.
 
