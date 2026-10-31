@@ -245,7 +245,7 @@ def _query(url: str) -> dict[str, str]:
     return dict(parse_qsl(urlsplit(url).query))
 
 
-@pytest.mark.parametrize("flag", ["", "false", "0", "no", "off", "garbage"])
+@pytest.mark.parametrize("flag", ["", "  ", "false", "0", "no", "OFF"])
 def test_tls_off_keeps_plaintext_url_byte_identical(monkeypatch: pytest.MonkeyPatch, flag: str) -> None:
     monkeypatch.setenv("VALKEY_HOST", "store")
     monkeypatch.setenv("VALKEY_TLS", flag)
@@ -253,7 +253,7 @@ def test_tls_off_keeps_plaintext_url_byte_identical(monkeypatch: pytest.MonkeyPa
     assert config.get_valkey_url() == "valkey://store:6379/0"
 
 
-@pytest.mark.parametrize("flag", ["true", "1", "YES"])
+@pytest.mark.parametrize("flag", ["true", "1", "YES", "on", " On "])
 def test_tls_on_emits_verified_valkeys_url(monkeypatch: pytest.MonkeyPatch, flag: str, tls_files: dict[str, str]) -> None:
     monkeypatch.setenv("VALKEY_HOST", "store")
     monkeypatch.setenv("VALKEY_PASSWORD", "pw")
@@ -278,7 +278,7 @@ def test_tls_client_certificate_is_passed(monkeypatch: pytest.MonkeyPatch, tls_f
     assert query["ssl_keyfile"] == tls_files["key"]
 
 
-@pytest.mark.parametrize("value", ["false", "0", "no"])
+@pytest.mark.parametrize("value", ["false", "0", "no", "off", "FALSE"])
 def test_tls_hostname_verification_opt_out_is_explicit(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     monkeypatch.setenv("VALKEY_TLS", "true")
     monkeypatch.setenv("VALKEY_TLS_VERIFY_HOSTNAME", value)
@@ -287,7 +287,7 @@ def test_tls_hostname_verification_opt_out_is_explicit(monkeypatch: pytest.Monke
     assert query["ssl_cert_reqs"] == "required"
 
 
-@pytest.mark.parametrize("value", ["true", "1", "yes", "on", "typo"])
+@pytest.mark.parametrize("value", ["", "true", "1", "yes", "on"])
 def test_tls_hostname_verification_stays_on_unless_explicitly_disabled(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     monkeypatch.setenv("VALKEY_TLS", "true")
     monkeypatch.setenv("VALKEY_TLS_VERIFY_HOSTNAME", value)
@@ -309,4 +309,13 @@ def test_tls_cert_and_key_must_be_paired(monkeypatch: pytest.MonkeyPatch, presen
     monkeypatch.setenv("VALKEY_TLS", "true")
     monkeypatch.setenv(f"VALKEY_TLS_{present.upper()}_FILE", tls_files[present])
     with pytest.raises(ValueError, match="set together"):
+        config.get_valkey_url()
+
+
+@pytest.mark.parametrize("name", ["VALKEY_TLS", "VALKEY_TLS_VERIFY_HOSTNAME"])
+@pytest.mark.parametrize("value", ["ture", "garbage", "2", "enabled"])
+def test_tls_flags_reject_unrecognized_values(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
+    monkeypatch.setenv("VALKEY_TLS", "true")
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=rf"{name} must be one of true/1/yes/on or false/0/no/off"):
         config.get_valkey_url()

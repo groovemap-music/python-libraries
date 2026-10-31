@@ -259,6 +259,26 @@ def valkey_pattern(pattern: str) -> str:
     return valkey_key_prefix() + pattern
 
 
+_STRICT_TRUE = frozenset({"true", "1", "yes", "on"})
+_STRICT_FALSE = frozenset({"false", "0", "no", "off"})
+
+
+def _strict_bool(name: str, default: bool) -> bool:
+    """Parse a security flag strictly: only explicit true/false tokens, else ``ValueError``.
+
+    Accepts true/1/yes/on and false/0/no/off (case-insensitive); unset or blank means
+    ``default``. A typo must not silently pick the insecure side.
+    """
+    raw = (getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in _STRICT_TRUE:
+        return True
+    if raw in _STRICT_FALSE:
+        return False
+    raise ValueError(f"{name} must be one of true/1/yes/on or false/0/no/off, got {raw!r}")
+
+
 def _valkey_tls_file(name: str) -> str | None:
     """Return the path in ``name`` if set, requiring it to be an existing file."""
     raw = (getenv(name) or "").strip()
@@ -272,22 +292,22 @@ def _valkey_tls_file(name: str) -> str | None:
 def valkey_tls_query() -> str:
     """Return the ``valkeys://`` query string for the VALKEY_TLS_* settings ("" when TLS is off).
 
-    ``VALKEY_TLS`` enables TLS with permissive truthy parsing ("true"/"1"/"yes"); anything else
-    keeps plaintext. When enabled the server certificate is always required, and its hostname
-    is verified unless ``VALKEY_TLS_VERIFY_HOSTNAME`` is an explicit falsey token
-    ("false"/"0"/"no"), because valkey-py's own ``ssl_check_hostname`` default is off.
+    ``VALKEY_TLS`` enables TLS and, like ``VALKEY_TLS_VERIFY_HOSTNAME``, accepts only
+    true/1/yes/on or false/0/no/off (case-insensitive); unset or blank is the default and any
+    other value raises ``ValueError`` so a typo cannot fall back to plaintext. When enabled the server certificate is always required, and its hostname
+    is verified unless ``VALKEY_TLS_VERIFY_HOSTNAME`` is explicitly false, because valkey-py's own ``ssl_check_hostname`` default is off.
     ``VALKEY_TLS_CA_FILE`` adds a private CA (unset trusts the system CAs);
     ``VALKEY_TLS_CERT_FILE`` and ``VALKEY_TLS_KEY_FILE`` supply a client certificate and must
     be set together. Configured files must exist, otherwise ``ValueError`` is raised at startup.
     """
-    if not _is_truthy(getenv("VALKEY_TLS")):
+    if not _strict_bool("VALKEY_TLS", default=False):
         return ""
     ca_file = _valkey_tls_file("VALKEY_TLS_CA_FILE")
     cert_file = _valkey_tls_file("VALKEY_TLS_CERT_FILE")
     key_file = _valkey_tls_file("VALKEY_TLS_KEY_FILE")
     if (cert_file is None) != (key_file is None):
         raise ValueError("VALKEY_TLS_CERT_FILE and VALKEY_TLS_KEY_FILE must be set together")
-    verify_hostname = not _is_falsey(getenv("VALKEY_TLS_VERIFY_HOSTNAME", "true"))
+    verify_hostname = _strict_bool("VALKEY_TLS_VERIFY_HOSTNAME", default=True)
     if not verify_hostname:
         logger.warning("⚠️ Valkey TLS hostname verification disabled — the certificate chain is verified but the server name is not checked")
     params = {"ssl_cert_reqs": "required", "ssl_check_hostname": "true" if verify_hostname else "false"}
