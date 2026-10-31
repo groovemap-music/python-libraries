@@ -119,6 +119,12 @@ The configuration helpers deliberately remain small:
   empty password disables authentication. Defaults are `localhost:6379` and database 0.
   `VALKEY_DB` must be an integer in `0..255` (blank means 0); anything else raises
   `ValueError` rather than silently using database 0.
+- With `VALKEY_TLS` truthy (`true`/`1`/`yes`), `get_valkey_url()` returns a `valkeys://` URL
+  carrying `ssl_cert_reqs=required`, `ssl_check_hostname=true` and, when set, `ssl_ca_certs`
+  (`VALKEY_TLS_CA_FILE`), `ssl_certfile` / `ssl_keyfile` (`VALKEY_TLS_CERT_FILE` /
+  `VALKEY_TLS_KEY_FILE`, both or neither). valkey-py defaults `ssl_check_hostname` to off, so it
+  is always emitted; only an explicit `VALKEY_TLS_VERIFY_HOSTNAME=false` disables it. Missing
+  files raise `ValueError`. Any other `VALKEY_TLS` value keeps the plaintext URL unchanged.
 - `valkey_key(*parts)` returns the configured prefix plus the parts joined by `:`, and
   `valkey_pattern(pattern)` prefixes a SCAN/KEYS glob so a sweep cannot leave the namespace.
   Use both for every key a service writes, reads, deletes or scans, for example

@@ -67,6 +67,13 @@ before raising a pin.
 set. A nonempty password file path wins over the plain password; an unreadable file raises
 an error.
 
+TLS is off by default. `VALKEY_TLS=true` makes the URL `valkeys://` with `ssl_cert_reqs=required`
+and `ssl_check_hostname=true` query parameters, which valkey-py's `from_url` honors, so
+`from_url(get_valkey_url())` callers need no code change. `VALKEY_TLS_CA_FILE` adds a private CA
+(unset trusts the system CAs), `VALKEY_TLS_CERT_FILE` and `VALKEY_TLS_KEY_FILE` supply a client
+certificate (set both or neither), and `VALKEY_TLS_VERIFY_HOSTNAME=false` is the only way to turn
+hostname checking off. Configured files must exist or `ValueError` is raised.
+
 `VALKEY_KEY_PREFIX` (default `groovemap:`; empty disables) namespaces keys on a shared
 instance. Build keys with `common.valkey_key(*parts)` and SCAN/KEYS globs with
 `common.valkey_pattern(pattern)`. See [the runtime contract](docs/runtime.md) for the
