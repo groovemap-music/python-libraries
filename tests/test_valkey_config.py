@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-_SUFFIXES = ("HOST", "PORT", "PASSWORD", "PASSWORD_FILE", "DB")
+_SUFFIXES = ("HOST", "PORT", "PASSWORD", "PASSWORD_FILE", "DB", "KEY_PREFIX")
 _LEGACY = {
     "REDIS_HOST": "legacy",
     "REDIS_PORT": "6390",
@@ -39,13 +39,13 @@ def isolated_store_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         ({"VALKEY_HOST": "store", "VALKEY_PORT": "6380"}, "store:6380"),
         ({"VALKEY_PASSWORD": "a:/@% b"}, ":a%3A%2F%40%25%20b@localhost:6379"),
         ({"VALKEY_PASSWORD": ""}, "localhost:6379"),
-        ({"VALKEY_DB": "9"}, "localhost:6379"),
     ],
 )
 def test_connection_matrix(monkeypatch: pytest.MonkeyPatch, settings: dict[str, str], authority: str) -> None:
     for name, value in settings.items():
         monkeypatch.setenv(name, value)
     assert config._build_valkey_url() == f"valkey://{authority}/0"
+    assert config.get_valkey_url() == config._build_valkey_url()
 
 
 def test_password_file_wins_and_is_quoted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -125,3 +125,96 @@ def test_legacy_settings_log_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
 )
 def test_transitional_helpers_are_removed(removed: str) -> None:
     assert not hasattr(config, removed)
+
+
+# VALKEY_DB, VALKEY_KEY_PREFIX and the key helpers.
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(None, 0), ("", 0), ("  ", 0), ("0", 0), ("9", 9), (" 15 ", 15), ("255", 255)])
+def test_valkey_db_parsing(monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: int) -> None:
+    if raw is not None:
+        monkeypatch.setenv("VALKEY_DB", raw)
+    assert config.valkey_db() == expected
+
+
+@pytest.mark.parametrize("raw", ["abc", "1.5", "-1", "256", "99999"])
+def test_valkey_db_rejects_invalid_or_out_of_range(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    monkeypatch.setenv("VALKEY_DB", raw)
+    with pytest.raises(ValueError, match="VALKEY_DB"):
+        config.valkey_db()
+    with pytest.raises(ValueError, match="VALKEY_DB"):
+        config.get_valkey_url()
+
+
+def test_url_includes_database_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VALKEY_HOST", "store")
+    monkeypatch.setenv("VALKEY_PASSWORD", "pw")
+    monkeypatch.setenv("VALKEY_DB", "9")
+    assert config.get_valkey_url() == "valkey://:pw@store:6379/9"
+    assert config._build_valkey_url() == "valkey://:pw@store:6379/9"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, "groovemap:"),
+        ("", ""),
+        ("gm", "gm:"),
+        ("gm:", "gm:"),
+        ("env.prod-1_a:gm:", "env.prod-1_a:gm:"),
+    ],
+)
+def test_key_prefix_parsing(monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: str) -> None:
+    if raw is not None:
+        monkeypatch.setenv("VALKEY_KEY_PREFIX", raw)
+    assert config.valkey_key_prefix() == expected
+
+
+@pytest.mark.parametrize("raw", ["*", "gm*", "a?b", "a[b]", "a\\b", "a b", "a/b", ":", "::", "gm\n", "gr\u00fcn"])
+def test_key_prefix_rejects_glob_and_unsafe_characters(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    monkeypatch.setenv("VALKEY_KEY_PREFIX", raw)
+    with pytest.raises(ValueError, match="VALKEY_KEY_PREFIX"):
+        config.valkey_key_prefix()
+
+
+def test_valkey_key_prefixes_and_joins_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert config.valkey_key("recommend:enhanced:42") == "groovemap:recommend:enhanced:42"
+    assert config.valkey_key("revoked", "jti", 7) == "groovemap:revoked:jti:7"
+    monkeypatch.setenv("VALKEY_KEY_PREFIX", "shared")
+    assert config.valkey_key("insights", "g3") == "shared:insights:g3"
+    monkeypatch.setenv("VALKEY_KEY_PREFIX", "")
+    assert config.valkey_key("insights:g3") == "insights:g3"
+
+
+@pytest.mark.parametrize("parts", [(), ("",), ("a", "")])
+def test_valkey_key_rejects_missing_parts(parts: tuple[str, ...]) -> None:
+    with pytest.raises(ValueError, match="valkey_key"):
+        config.valkey_key(*parts)
+
+
+def test_valkey_pattern_keeps_wildcards_inside_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert config.valkey_pattern("insights:g*") == "groovemap:insights:g*"
+    assert config.valkey_pattern("*") == "groovemap:*"
+    monkeypatch.setenv("VALKEY_KEY_PREFIX", "other")
+    assert config.valkey_pattern("recommend:explore:7:*") == "other:recommend:explore:7:*"
+    monkeypatch.setenv("VALKEY_KEY_PREFIX", "")
+    assert config.valkey_pattern("insights:g*") == "insights:g*"
+
+
+def test_valkey_pattern_rejects_empty_pattern() -> None:
+    with pytest.raises(ValueError, match="valkey_pattern"):
+        config.valkey_pattern("")
+
+
+def test_key_and_pattern_agree(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key built by valkey_key is matched by the valkey_pattern for its family."""
+    from fnmatch import fnmatchcase
+
+    for prefix in (None, "", "team-a"):
+        if prefix is None:
+            monkeypatch.delenv("VALKEY_KEY_PREFIX", raising=False)
+        else:
+            monkeypatch.setenv("VALKEY_KEY_PREFIX", prefix)
+        assert fnmatchcase(config.valkey_key("insights:g2:top"), config.valkey_pattern("insights:g*"))
+    monkeypatch.setenv("VALKEY_KEY_PREFIX", "team-a")
+    assert not fnmatchcase("team-b:insights:g2:top", config.valkey_pattern("insights:g*"))

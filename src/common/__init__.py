@@ -9,7 +9,7 @@ __path__ = extend_path(__path__, __name__)
 
 if TYPE_CHECKING:
     from common.batch import AsyncBatchEngine, BatchItemResult, BatchObserver, BatchPolicy, BatchSink
-    from common.config import neo4j_security_kwargs, parse_postgres_host_port, setup_logging
+    from common.config import neo4j_security_kwargs, parse_postgres_host_port, setup_logging, valkey_key, valkey_pattern
     from common.data_normalizer import normalize_record
     from common.db_resilience import (
         AsyncResilientConnection,
@@ -107,6 +107,8 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "neo4j_security_kwargs": ("common.config", "neo4j_security_kwargs"),
     "parse_postgres_host_port": ("common.config", "parse_postgres_host_port"),
     "setup_logging": ("common.config", "setup_logging"),
+    "valkey_key": ("common.config", "valkey_key"),
+    "valkey_pattern": ("common.config", "valkey_pattern"),
     "normalize_record": ("common.data_normalizer", "normalize_record"),
     "AsyncResilientConnection": ("common.db_resilience", "AsyncResilientConnection"),
     "CircuitBreaker": ("common.db_resilience", "CircuitBreaker"),

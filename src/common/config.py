@@ -193,19 +193,90 @@ def _build_postgres_connstr() -> str:
     return f"{host}:{port}"
 
 
-def _build_valkey_url() -> str:
-    """Build a valkey:// URL using VALKEY_HOST/PORT/PASSWORD and PASSWORD_FILE.
+DEFAULT_VALKEY_KEY_PREFIX = "groovemap:"
+_VALKEY_MAX_DB = 255
+_VALKEY_PREFIX_ALLOWED = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.:")
 
-    Only VALKEY_* settings are read. A nonempty
-    VALKEY_PASSWORD_FILE path wins over VALKEY_PASSWORD, and an unreadable file fails
-    rather than falling back. Passwords are URL-quoted, absent or empty passwords omit
-    authentication, and the database is always 0.
+
+def valkey_db() -> int:
+    """Return the Valkey database index from VALKEY_DB (default 0).
+
+    A blank value means the default. Anything that is not an integer in ``0..255`` raises
+    ``ValueError`` so a typo fails at startup instead of silently selecting database 0.
+    """
+    raw = (getenv("VALKEY_DB") or "").strip()
+    if not raw:
+        return 0
+    try:
+        db = int(raw)
+    except ValueError:
+        raise ValueError(f"VALKEY_DB must be an integer, got {raw!r}") from None
+    if not 0 <= db <= _VALKEY_MAX_DB:
+        raise ValueError(f"VALKEY_DB must be between 0 and {_VALKEY_MAX_DB}, got {db}")
+    return db
+
+
+def valkey_key_prefix() -> str:
+    """Return the namespace prepended to every Valkey key, from VALKEY_KEY_PREFIX.
+
+    Unset means ``"groovemap:"``. An explicitly empty value disables prefixing (for a
+    dedicated instance, or to keep keys written before prefixes existed). A nonempty value
+    may use letters, digits and ``_-.:``; a missing trailing ``:`` is appended. Glob
+    characters, whitespace and anything else raise ``ValueError``, because the prefix is
+    also embedded in SCAN/KEYS patterns where ``*?[]\\`` would widen the match.
+    """
+    raw = getenv("VALKEY_KEY_PREFIX")
+    if raw is None:
+        return DEFAULT_VALKEY_KEY_PREFIX
+    if raw == "":
+        return ""
+    bad = sorted({ch for ch in raw if ch not in _VALKEY_PREFIX_ALLOWED})
+    if bad:
+        raise ValueError(f"VALKEY_KEY_PREFIX may only contain letters, digits and '_-.:', found {''.join(bad)!r}")
+    if raw.strip(":") == "":
+        raise ValueError("VALKEY_KEY_PREFIX must contain more than colons")
+    return raw if raw.endswith(":") else f"{raw}:"
+
+
+def valkey_key(*parts: object) -> str:
+    """Build a namespaced Valkey key: the configured prefix plus ``parts`` joined by ``:``.
+
+    Each part is converted with ``str``; at least one nonempty part is required.
+    """
+    if not parts or any(str(part) == "" for part in parts):
+        raise ValueError("valkey_key requires at least one part and no empty parts")
+    return valkey_key_prefix() + ":".join(str(part) for part in parts)
+
+
+def valkey_pattern(pattern: str) -> str:
+    """Prefix a SCAN/KEYS glob so it can only match keys inside the namespace.
+
+    The prefix is validated glob-free, so the user-supplied ``pattern`` keeps its own
+    wildcards while the namespace stays literal.
+    """
+    if not pattern:
+        raise ValueError("valkey_pattern requires a nonempty pattern")
+    return valkey_key_prefix() + pattern
+
+
+def get_valkey_url() -> str:
+    """Build a valkey:// URL using VALKEY_HOST/PORT/PASSWORD, PASSWORD_FILE and DB.
+
+    Only VALKEY_* settings are read. A nonempty VALKEY_PASSWORD_FILE path wins over
+    VALKEY_PASSWORD, and an unreadable file fails rather than falling back. Passwords are
+    URL-quoted, absent or empty passwords omit authentication, and the database comes from
+    VALKEY_DB (default 0).
     """
     password = get_secret("VALKEY_PASSWORD")
     host = getenv("VALKEY_HOST", "localhost")
     port = getenv("VALKEY_PORT", "6379")
     auth = f":{_url_quote(password, safe='')}@" if password else ""
-    return f"valkey://{auth}{host}:{port}/0"
+    return f"valkey://{auth}{host}:{port}/{valkey_db()}"
+
+
+def _build_valkey_url() -> str:
+    """Backward-compatible private name for :func:`get_valkey_url`."""
+    return get_valkey_url()
 
 
 def neo4j_security_kwargs() -> dict[str, Any]:
