@@ -259,19 +259,86 @@ def valkey_pattern(pattern: str) -> str:
     return valkey_key_prefix() + pattern
 
 
-def get_valkey_url() -> str:
-    """Build a valkey:// URL using VALKEY_HOST/PORT/PASSWORD, PASSWORD_FILE and DB.
+_STRICT_TRUE = frozenset({"true", "1", "yes", "on"})
+_STRICT_FALSE = frozenset({"false", "0", "no", "off"})
 
-    Only VALKEY_* settings are read. A nonempty VALKEY_PASSWORD_FILE path wins over
-    VALKEY_PASSWORD, and an unreadable file fails rather than falling back. Passwords are
-    URL-quoted, absent or empty passwords omit authentication, and the database comes from
+
+def _strict_bool(name: str, default: bool) -> bool:
+    """Parse a security flag strictly: only explicit true/false tokens, else ``ValueError``.
+
+    Accepts true/1/yes/on and false/0/no/off (case-insensitive); unset or blank means
+    ``default``. A typo must not silently pick the insecure side.
+    """
+    raw = (getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in _STRICT_TRUE:
+        return True
+    if raw in _STRICT_FALSE:
+        return False
+    raise ValueError(f"{name} must be one of true/1/yes/on or false/0/no/off, got {raw!r}")
+
+
+def _valkey_tls_file(name: str) -> str | None:
+    """Return the path in ``name`` if set, requiring it to be an existing file."""
+    raw = (getenv(name) or "").strip()
+    if not raw:
+        return None
+    if not Path(raw).is_file():
+        raise ValueError(f"{name} must point to an existing file, got {raw!r}")
+    return raw
+
+
+def valkey_tls_query() -> str:
+    """Return the ``valkeys://`` query string for the VALKEY_TLS_* settings ("" when TLS is off).
+
+    ``VALKEY_TLS`` enables TLS and, like ``VALKEY_TLS_VERIFY_HOSTNAME``, accepts only
+    true/1/yes/on or false/0/no/off (case-insensitive); unset or blank is the default and any
+    other value raises ``ValueError`` so a typo cannot fall back to plaintext. When enabled the server certificate is always required, and its hostname
+    is verified unless ``VALKEY_TLS_VERIFY_HOSTNAME`` is explicitly false, because valkey-py's own ``ssl_check_hostname`` default is off.
+    ``VALKEY_TLS_CA_FILE`` adds a private CA (unset trusts the system CAs);
+    ``VALKEY_TLS_CERT_FILE`` and ``VALKEY_TLS_KEY_FILE`` supply a client certificate and must
+    be set together. Configured files must exist, otherwise ``ValueError`` is raised at startup.
+    """
+    if not _strict_bool("VALKEY_TLS", default=False):
+        return ""
+    ca_file = _valkey_tls_file("VALKEY_TLS_CA_FILE")
+    cert_file = _valkey_tls_file("VALKEY_TLS_CERT_FILE")
+    key_file = _valkey_tls_file("VALKEY_TLS_KEY_FILE")
+    if (cert_file is None) != (key_file is None):
+        raise ValueError("VALKEY_TLS_CERT_FILE and VALKEY_TLS_KEY_FILE must be set together")
+    verify_hostname = _strict_bool("VALKEY_TLS_VERIFY_HOSTNAME", default=True)
+    if not verify_hostname:
+        logger.warning("⚠️ Valkey TLS hostname verification disabled — the certificate chain is verified but the server name is not checked")
+    params = {"ssl_cert_reqs": "required", "ssl_check_hostname": "true" if verify_hostname else "false"}
+    if ca_file:
+        params["ssl_ca_certs"] = ca_file
+    if cert_file and key_file:
+        params["ssl_certfile"] = cert_file
+        params["ssl_keyfile"] = key_file
+    return "?" + "&".join(f"{key}={_url_quote(value, safe='')}" for key, value in params.items())
+
+
+def get_valkey_url() -> str:
+    """Build a valkey:// (or, with VALKEY_TLS, valkeys://) URL from VALKEY_* settings.
+
+    Reads VALKEY_HOST/PORT/PASSWORD, PASSWORD_FILE and DB. A nonempty VALKEY_PASSWORD_FILE path
+    wins over VALKEY_PASSWORD, and an unreadable file fails rather than falling back. Passwords
+    are URL-quoted, absent or empty passwords omit authentication, and the database comes from
     VALKEY_DB (default 0).
+
+    With VALKEY_TLS enabled the scheme becomes ``valkeys://`` and the verification settings
+    from :func:`valkey_tls_query` are appended as ``ssl_*`` query parameters, which valkey-py's
+    ``from_url`` honors, so existing ``from_url(get_valkey_url())`` callers need no change.
+    The plaintext default is unchanged.
     """
     password = get_secret("VALKEY_PASSWORD")
     host = getenv("VALKEY_HOST", "localhost")
     port = getenv("VALKEY_PORT", "6379")
     auth = f":{_url_quote(password, safe='')}@" if password else ""
-    return f"valkey://{auth}{host}:{port}/{valkey_db()}"
+    tls = valkey_tls_query()
+    scheme = "valkeys" if tls else "valkey"
+    return f"{scheme}://{auth}{host}:{port}/{valkey_db()}{tls}"
 
 
 def _build_valkey_url() -> str:
