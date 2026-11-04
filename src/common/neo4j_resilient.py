@@ -122,7 +122,10 @@ class ResilientNeo4jDriver(ResilientConnection[Any]):
 class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
     """Async resilient Neo4j driver with automatic reconnection and circuit breaker."""
 
-    _open_sessions = 0  # class default so partially constructed instances still count safely
+    # Class defaults so partially constructed instances still behave; __init__ sets per-instance values.
+    _open_sessions = 0
+    _last_session_activity_at = 0.0
+    busy_progress_window = 120.0
 
     def __init__(self, uri: str, auth: tuple[str, str], max_retries: int = 5, **driver_kwargs: Any):
         # Neo4j driver configuration
@@ -165,9 +168,18 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
         # Sessions borrowed through session(): when they fill the Bolt pool, a probe that cannot get a
         # connection is waiting its turn behind real work, not talking to a hung peer.
         self._open_sessions = 0
+        self._last_session_activity_at = time.monotonic()
+        self.busy_progress_window = 120.0
 
     def _probe_timeout_is_busy(self, connection: Any) -> bool:  # noqa: ARG002
-        return self._open_sessions >= int(self.driver_kwargs["max_connection_pool_size"])
+        """Busy only if every Bolt connection is lent out AND sessions are still starting or finishing.
+
+        A hung peer freezes its borrowers too, so activity stops; once nothing has started or finished for
+        ``busy_progress_window`` seconds, saturation no longer explains an unanswered probe.
+        """
+        pool_size = int(self.driver_kwargs["max_connection_pool_size"])
+        saturated = 0 < pool_size <= self._open_sessions
+        return saturated and time.monotonic() - self._last_session_activity_at < self.busy_progress_window
 
     async def _create_driver(self) -> Any:
         """Create a new async Neo4j driver instance."""
@@ -195,11 +207,13 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
             with tracing.db_span("neo4j", "session"):
                 driver = await self.get_connection()
                 self._open_sessions += 1
+                self._last_session_activity_at = time.monotonic()
                 try:
                     async with driver.session(**kwargs) as session:
                         yield session
                 finally:
                     self._open_sessions -= 1
+                    self._last_session_activity_at = time.monotonic()
         except (ServiceUnavailable, SessionExpired) as exc:
             self.note_borrower_error()
             error_type = runtime_metrics.error_type_of(exc)

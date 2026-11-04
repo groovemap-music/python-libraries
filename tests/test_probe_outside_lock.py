@@ -253,6 +253,55 @@ class TestBorrowerErrorsAndCloseOrdering:
         await manager.close()
 
 
+class TestReviewFollowUps:
+    @pytest.mark.asyncio
+    async def test_borrower_errors_do_not_reset_the_consecutive_failure_count(self) -> None:
+        fresh = object()
+        existing = object()
+        manager: AsyncResilientConnection = AsyncResilientConnection(
+            lambda: fresh, lambda c: c is fresh, health_check_ttl=0.0, unhealthy_threshold=3, close_grace_period=0, max_retries=1
+        )
+        manager._connection = existing
+        manager._last_healthy_at = time.monotonic() - 1.0
+        got = []
+        for _ in range(3):
+            got.append(await manager.get_connection())  # failing probe each time
+            manager.note_borrower_error()  # a borrower also reports ServiceUnavailable
+        assert got[:2] == [existing, existing]
+        assert got[2] is fresh  # replaced on the third failure: borrower errors did not reset the count
+        await manager.close()
+
+    def test_neo4j_saturation_needs_fresh_activity_and_a_sane_pool_size(self) -> None:
+        driver = AsyncResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"), max_connection_pool_size=2)
+        driver._open_sessions = 2
+        assert driver._probe_timeout_is_busy(object()) is True
+        driver._last_session_activity_at = time.monotonic() - driver.busy_progress_window - 1
+        assert driver._probe_timeout_is_busy(object()) is False  # saturated but frozen: a hung peer, not busy work
+        driver._last_session_activity_at = time.monotonic()
+        driver._open_sessions = 1
+        assert driver._probe_timeout_is_busy(object()) is False
+        driver.driver_kwargs["max_connection_pool_size"] = -1
+        driver._open_sessions = 5
+        assert driver._probe_timeout_is_busy(object()) is False  # a nonsensical pool size is never "saturated"
+
+    def test_open_session_counter_is_per_driver(self) -> None:
+        a = AsyncResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"), max_connection_pool_size=1)
+        b = AsyncResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"), max_connection_pool_size=1)
+        a._open_sessions = 1
+        assert b._open_sessions == 0
+        assert b._probe_timeout_is_busy(object()) is False
+
+    def test_postgres_busy_only_while_a_statement_is_executing(self) -> None:
+        import psycopg
+
+        from common.postgres_resilient import AsyncResilientPostgreSQL
+
+        status = psycopg.pq.TransactionStatus
+        pg = AsyncResilientPostgreSQL({"host": "localhost"})  # type: ignore[arg-type]
+        for state, busy in ((status.ACTIVE, True), (status.IDLE, False), (status.INTRANS, False)):
+            assert pg._probe_timeout_is_busy(Mock(info=Mock(transaction_status=state))) is busy
+
+
 class TestSyncDriverProbeTtl:
     def test_default_is_opt_in(self) -> None:
         assert ResilientConnection(lambda: object(), lambda _c: True).health_check_ttl == 0
@@ -395,3 +444,38 @@ async def test_hung_live_neo4j_is_replaced_within_a_bound() -> None:
     healthy = await driver.get_connection()
     assert healthy is not raw  # recovered onto a fresh driver once the peer answers again
     await driver.close()
+
+
+_PG_HOST = os.environ.get("POSTGRES_HOST", "")
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _PG_HOST, reason="POSTGRES_HOST not set")
+@pytest.mark.asyncio
+async def test_live_postgres_connection_running_a_long_statement_is_not_replaced() -> None:
+    from common.postgres_resilient import AsyncResilientPostgreSQL
+
+    params = {
+        "host": _PG_HOST,
+        "port": int(os.environ.get("POSTGRES_PORT", "5432")),
+        "user": os.environ.get("POSTGRES_USER", "u"),
+        "password": os.environ.get("POSTGRES_PASSWORD", "pw"),
+        "dbname": os.environ.get("POSTGRES_DB", "d"),
+    }
+    pg = AsyncResilientPostgreSQL(params)
+    pg.health_check_ttl = 0.1
+    pg.probe_timeout = 0.5
+    conn = await pg.get_connection()
+
+    async def long_statement() -> None:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT pg_sleep(6)")
+
+    work = asyncio.create_task(long_statement())
+    await asyncio.sleep(0.4)
+    for _ in range(pg.unhealthy_threshold + 2):  # more timed-out probes than would replace a hung peer
+        await asyncio.sleep(0.2)
+        assert await pg.get_connection() is conn
+    assert pg._failed_probes == 0
+    await work  # the in-flight statement ran to completion on the original connection
+    await pg.close()

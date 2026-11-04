@@ -357,7 +357,7 @@ class ResilientConnection[T]:
 
     def note_borrower_error(self) -> None:
         """A borrower hit a connection-level error: drop the healthy verdict so the next call probes."""
-        self._reset_health_state()
+        self._last_healthy_at = 0.0
 
     def close(self) -> None:
         """Close the connection."""
@@ -550,8 +550,12 @@ class AsyncResilientConnection[T]:
                 await task
 
     def note_borrower_error(self) -> None:
-        """A borrower hit a connection-level error: drop the healthy verdict so the next checkout probes."""
-        self._reset_health_state()
+        """A borrower hit a connection-level error: drop the healthy verdict so the next checkout probes.
+
+        Only the verdict is cleared. ``_failed_probes`` is left alone, so borrower errors cannot keep resetting the
+        consecutive-failure count that replaces a dead connection.
+        """
+        self._last_healthy_at = 0.0
 
     async def _drain_deferred_closes(self) -> None:
         """Close every detached connection immediately (explicit shutdown)."""
