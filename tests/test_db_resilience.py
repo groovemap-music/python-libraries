@@ -345,7 +345,7 @@ class TestResilientConnection:
         connection_factory = Mock(side_effect=[old_conn, new_conn])
         connection_test = Mock(side_effect=[True, False, True])  # First healthy, then unhealthy, then healthy
 
-        manager = ResilientConnection(connection_factory, connection_test)
+        manager = ResilientConnection(connection_factory, connection_test, health_check_ttl=0)
 
         # First call - creates connection
         conn1 = manager.get_connection()
@@ -1142,7 +1142,7 @@ class TestResilientConnectionCloseOnReplace:
         connection_factory = Mock(side_effect=[old_conn, new_conn])
         connection_test = Mock(side_effect=[True, False, True])  # fresh-ok, then unhealthy, then new-ok
 
-        manager = ResilientConnection(connection_factory, connection_test)
+        manager = ResilientConnection(connection_factory, connection_test, health_check_ttl=0)
         assert manager.get_connection() is old_conn
         assert manager.get_connection() is new_conn
 

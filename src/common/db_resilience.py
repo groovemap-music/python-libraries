@@ -247,6 +247,7 @@ class ResilientConnection[T]:
         max_retries: int = 3,
         name: str = "Connection",
         system: str | None = None,
+        health_check_ttl: float = 30.0,
     ):
         self.connection_factory = connection_factory
         self.connection_test = connection_test
@@ -257,6 +258,8 @@ class ResilientConnection[T]:
         # Closed-set metric attribute for this wrapper's backing system; falls back to the
         # display name so an unlabelled subclass still reports something stable.
         self.system = system or name.lower()
+        self.health_check_ttl = health_check_ttl
+        self._last_healthy_at: float = 0.0
         self._connection: T | None = None
         self._lock = Lock()
 
@@ -281,12 +284,19 @@ class ResilientConnection[T]:
     def get_connection(self) -> T:
         """Get a healthy connection, creating or reconnecting if needed."""
         with self._lock:
-            if self._connection and self._test_connection(self._connection):
-                return self._connection
+            if self._connection:
+                # A passing probe is trusted for health_check_ttl: probing on every call put one
+                # round trip (and, on a saturated driver, a long wait under this lock) in front of each session.
+                if self._last_healthy_at and time.monotonic() - self._last_healthy_at < self.health_check_ttl:
+                    return self._connection
+                if self._test_connection(self._connection):
+                    self._last_healthy_at = time.monotonic()
+                    return self._connection
 
             if self._connection is not None:
                 self._close_connection(self._connection)
                 self._connection = None
+                self._last_healthy_at = 0.0
 
             retry_count = 0
             last_error = None
@@ -296,6 +306,7 @@ class ResilientConnection[T]:
                     logger.info(f"🔄 {self.name}: Creating new connection (attempt {retry_count + 1}/{self.max_retries})")
 
                     self._connection = self.circuit_breaker.call(self._create_tested_connection)
+                    self._last_healthy_at = time.monotonic()
                     runtime_metrics.record_reconnect(self.system)
                     logger.info(f"✅ {self.name}: Connection established successfully")
                     return self._connection
@@ -351,6 +362,7 @@ class AsyncResilientConnection[T]:
         close_grace_period: float = 30.0,
         reconnect_cooldown: float = 5.0,
         system: str | None = None,
+        probe_timeout: float = 5.0,
     ):
         self.connection_factory = connection_factory
         self.connection_test = connection_test
@@ -360,6 +372,8 @@ class AsyncResilientConnection[T]:
         self.name = name
         self.system = system or name.lower()
         self.health_check_ttl = health_check_ttl
+        self.probe_timeout = probe_timeout
+        self._probe_task: asyncio.Task[bool] | None = None
         self.unhealthy_threshold = unhealthy_threshold
         self.close_grace_period = close_grace_period
         self.reconnect_cooldown = reconnect_cooldown
@@ -402,27 +416,35 @@ class AsyncResilientConnection[T]:
             logger.warning(f"⚠️ {self.name}: Connection test failed: {e}")
             return False
 
-    async def _connection_is_usable(self, connection: T) -> bool:
-        """Decide whether an existing connection may still be handed out.
+    def _recently_healthy(self) -> bool:
+        return bool(self._last_healthy_at) and time.monotonic() - self._last_healthy_at < self.health_check_ttl
 
-        Two guards keep a merely BUSY connection from being torn down:
+    async def _probe_verdict(self, connection: T) -> bool:
+        """Probe an existing connection and return whether it may still be handed out.
+
+        Runs as a single shared task OUTSIDE the handle lock, so a slow probe never blocks other callers.
+        Three guards keep a merely BUSY connection from being torn down:
 
         * a successful probe is trusted for ``health_check_ttl`` seconds, so
           borrowing does not pay a health round trip per call — that round trip
-          is also what made the pool-starvation trigger reachable; and
+          is also what made the pool-starvation trigger reachable;
+        * a probe that has not answered within ``probe_timeout`` is a busy driver (a pool-acquisition
+          wait, which can last a minute), not a dead one: the connection is kept and nothing is recorded; and
         * ``unhealthy_threshold`` CONSECUTIVE probe failures are required before
           the connection is declared dead. One failure is not proof the server
-          is gone: a pool-acquisition timeout means every slot is busy, i.e. the
-          connection is working, and replacing it would abort the in-flight work
+          is gone: replacing the connection would abort the in-flight work
           of every other coroutine holding a session borrowed from it.
         """
-        now = time.monotonic()
-        if self._last_healthy_at and now - self._last_healthy_at < self.health_check_ttl:
+        try:
+            ok = await asyncio.wait_for(self._probe_connection(connection), timeout=self.probe_timeout)
+        except TimeoutError:
+            logger.warning(f"⚠️ {self.name}: Health probe unanswered after {self.probe_timeout:.0f}s — connection is busy, keeping it")
             return True
-
-        if await self._probe_connection(connection):
+        if self._connection is not connection:
+            return True  # replaced or detached while probing: this verdict is about a stale handle
+        if ok:
             self._failed_probes = 0
-            self._last_healthy_at = now
+            self._last_healthy_at = time.monotonic()
             return True
 
         self._failed_probes += 1
@@ -501,30 +523,50 @@ class AsyncResilientConnection[T]:
         inside ``reconnect_cooldown`` of a failed cycle fail fast instead of
         repeating it.
         """
-        if self._lock is None:
-            self._lock = asyncio.Lock()
+        lock = self._get_lock()
 
-        async with self._lock:
+        async with lock:
             connection = self._connection
+            probe: asyncio.Task[bool] | None = None
             if connection is not None:
-                if await self._connection_is_usable(connection):
+                if self._recently_healthy():
                     return connection
+                if self._probe_task is not None and not self._probe_task.done():
+                    # A probe is already in flight (possibly a driver saturated by busy work). Do not queue
+                    # behind it: the connection was healthy at its last verdict.
+                    return connection
+                probe = self._probe_task = asyncio.create_task(self._probe_verdict(connection))
+                probe.add_done_callback(_consume_task_exception)
+            else:
+                reconnect = self._start_reconnect_locked()
 
-                self._detach_connection(connection)
-
-            if self._reconnect_failure_is_fresh():
-                raise ConnectionEstablishmentError(
-                    f"{self.name}: Connection unavailable — a reconnect cycle failed less than {self.reconnect_cooldown:.0f}s ago"
-                ) from self._last_failure_error
-
-            if self._reconnect_task is None or self._reconnect_task.done():
-                self._reconnect_task = asyncio.create_task(self._reconnect())
-                # Consume a failed shared task even when all of its waiters are cancelled.
-                self._reconnect_task.add_done_callback(_consume_task_exception)
-            task = self._reconnect_task
+        if probe is not None and connection is not None:
+            # Outside the lock: a slow probe delays only this caller, and only up to ``probe_timeout``.
+            if await asyncio.shield(probe):
+                return connection
+            async with lock:
+                current = self._connection
+                if current is not None and current is not connection:
+                    return current
+                if current is connection:
+                    self._detach_connection(connection)
+                reconnect = self._start_reconnect_locked()
 
         # A cancelled waiter must not cancel the reconnect shared by other callers.
-        return await asyncio.shield(task)
+        return await asyncio.shield(reconnect)
+
+    def _start_reconnect_locked(self) -> asyncio.Task[T]:
+        """Join the in-flight reconnect or start one. Caller holds the handle lock."""
+        if self._reconnect_failure_is_fresh():
+            raise ConnectionEstablishmentError(
+                f"{self.name}: Connection unavailable — a reconnect cycle failed less than {self.reconnect_cooldown:.0f}s ago"
+            ) from self._last_failure_error
+
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = asyncio.create_task(self._reconnect())
+            # Consume a failed shared task even when all of its waiters are cancelled.
+            self._reconnect_task.add_done_callback(_consume_task_exception)
+        return self._reconnect_task
 
     async def _reconnect(self) -> T:
         """Run the retry/backoff cycle, publishing the result under the lock."""
@@ -595,6 +637,9 @@ class AsyncResilientConnection[T]:
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:
+            if self._probe_task is not None and not self._probe_task.done():
+                self._probe_task.cancel()
+            self._probe_task = None
             await self._drain_deferred_closes()
             if self._connection is not None:
                 await self._aclose_connection(self._connection)
