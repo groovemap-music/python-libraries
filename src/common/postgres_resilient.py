@@ -108,6 +108,15 @@ class AsyncResilientPostgreSQL(AsyncResilientConnection[Any]):
             system="postgresql",
         )
 
+    def _probe_timeout_is_busy(self, connection: Any) -> bool:
+        """A probe queues behind a statement currently executing on this connection: that is work, not a hung peer.
+
+        An idle or merely in-transaction connection has nothing ahead of the probe, so its silence is a failure."""
+        try:
+            return bool(connection.info.transaction_status == psycopg.pq.TransactionStatus.ACTIVE)
+        except Exception:
+            return False
+
     async def _create_connection(self) -> Any:
         """Create a new async PostgreSQL connection."""
         logger.info("🐘 Creating new async PostgreSQL connection")

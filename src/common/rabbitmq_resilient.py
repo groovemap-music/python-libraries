@@ -148,8 +148,9 @@ class ResilientRabbitMQConnection(ResilientConnection[BlockingConnection]):
                     logger.info("✅ RabbitMQ connection closed")
                 except Exception as e:
                     logger.warning(f"⚠️ Error closing RabbitMQ connection: {e}")
-                finally:
-                    self._connection = None
+            # Clear the handle and any healthy verdict even when the connection was already closed.
+            self._connection = None
+            self._reset_health_state()
 
 
 def _publish_destination(exchange: str, routing_key: str) -> str:
