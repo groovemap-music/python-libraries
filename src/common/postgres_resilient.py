@@ -8,9 +8,10 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
-from psycopg.errors import DatabaseError, InterfaceError, OperationalError
+from psycopg.errors import DatabaseError, DataError, IntegrityError, InterfaceError, OperationalError
 
 from common import runtime_metrics, tracing
+from common.delivery import FailureKind
 
 from .db_resilience import (
     AsyncResilientConnection,
@@ -27,6 +28,50 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+# SQLSTATE classes whose cause is the server, the connection or its resources, so the same
+# statement can succeed later: 08 connection exception, 40 transaction rollback (serialization
+# failure, deadlock), 53 insufficient resources, 55 object not in prerequisite state, 57 operator
+# intervention (admin shutdown, cannot connect now, query cancel), 58 system error, F0 config file.
+TRANSIENT_SQLSTATE_CLASSES = frozenset({"08", "40", "53", "55", "57", "58", "F0"})
+
+
+def is_permanent_operational_error(error: BaseException) -> bool:
+    """True for a server-reported ``OperationalError`` that is not a connection-class failure.
+
+    psycopg raises e.g. ``ProgramLimitExceeded`` (54000, "index row size exceeds btree maximum")
+    as an ``OperationalError`` subclass. It comes from the record, not the connection, so retrying
+    can never help. An ``OperationalError`` with no SQLSTATE (client-side connection loss, pool
+    timeout) carries no server verdict and is not permanent.
+    """
+    if not isinstance(error, OperationalError):
+        return False
+    sqlstate = getattr(error, "sqlstate", None)
+    if not isinstance(sqlstate, str) or len(sqlstate) != 5:
+        return False
+    return sqlstate[:2] not in TRANSIENT_SQLSTATE_CLASSES
+
+
+class PostgreSQLFailureClassifier:
+    """Map PostgreSQL failures onto the shared retry taxonomy (``FailureClassifier``).
+
+    Connection-class failures (SQLSTATE 08, 40, 53, 55, 57, 58, F0 and ``OperationalError`` or
+    ``InterfaceError`` with no SQLSTATE) are transient. Other server-reported
+    ``OperationalError`` values, ``DataError``, ``IntegrityError``, ``ValueError`` and
+    ``RuntimeError`` are deterministic. Unknown exceptions stay transient so a valid record is
+    never dead-lettered by an unrecognised infrastructure failure.
+    """
+
+    _DETERMINISTIC = (DataError, IntegrityError, ValueError, RuntimeError)
+
+    def __call__(self, error: BaseException) -> FailureKind:
+        if is_permanent_operational_error(error):
+            return FailureKind.DETERMINISTIC
+        if isinstance(error, (InterfaceError, OperationalError, DatabaseUnavailableError)):
+            return FailureKind.TRANSIENT
+        if isinstance(error, self._DETERMINISTIC):
+            return FailureKind.DETERMINISTIC
+        return FailureKind.TRANSIENT
 
 
 class AsyncResilientPostgreSQL(AsyncResilientConnection[Any]):
@@ -411,7 +456,21 @@ class AsyncPostgreSQLPool:
 
         try:
             yield conn
-        except (InterfaceError, OperationalError) as e:
+        except OperationalError as e:
+            if is_permanent_operational_error(e):
+                # The server answered with a verdict about the statement or data (e.g.
+                # ProgramLimitExceeded), not a connection problem. Say so; the connection is
+                # still discarded below because its transaction state is unknown.
+                logger.warning(f"⚠️ Permanent database error during operation (SQLSTATE {e.sqlstate}), not a connection failure: {e}")
+            else:
+                logger.warning(f"⚠️ Connection error during operation: {e}")
+            with contextlib.suppress(Exception):
+                await conn.close()
+            async with self._lock:
+                self.active_connections = max(0, self.active_connections - 1)
+            conn = None
+            raise
+        except InterfaceError as e:
             # Connection error during use - don't return to pool
             logger.warning(f"⚠️ Connection error during operation: {e}")
             with contextlib.suppress(Exception):

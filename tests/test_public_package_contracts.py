@@ -43,6 +43,7 @@ RUNTIME_EXPORTS = {
     "IdentifierValidationError",
     "Impression",
     "OutageBackoff",
+    "PostgreSQLFailureClassifier",
     "ResilientConnection",
     "ResilientNeo4jDriver",
     "ResilientRabbitMQConnection",

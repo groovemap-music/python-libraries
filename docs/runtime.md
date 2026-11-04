@@ -22,7 +22,7 @@ from an implementation module, when a name appears here.
 | Media taxonomy | `map_discogs_formats`, `map_musicbrainz_release`, `legacy_format_names_to_media`, `flatten_descriptions`, `families_of`, `family_ids`, `medium_ids`, `medium_label` |
 | Native identity | `AliasRef`, `entity_kinds`, `catalog_kinds`, `providers`, `alias_sources`, `is_valid_entity_kind`, `is_valid_provider`, `is_valid_alias_source`, `new_id`, `resolve_aliases`, `attach_aliases` |
 | Neo4j | `AsyncResilientNeo4jDriver`, `ResilientNeo4jDriver`, `with_async_neo4j_retry`, `with_neo4j_retry` |
-| PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL` |
+| PostgreSQL | `AsyncPostgreSQLPool`, `AsyncResilientPostgreSQL`, `PostgreSQLFailureClassifier` |
 | Query diagnostics | `execute_sql`, `is_db_profiling`, `is_debug`, `log_cypher_query`, `log_sql_query` |
 | RabbitMQ | `AsyncResilientRabbitMQ`, `ResilientRabbitMQConnection`, `process_message_with_retry` |
 | Telemetry | `setup_telemetry`, `shutdown_telemetry`, `get_meter`, `instrument_fastapi_app`, `instrument_httpx`, `start_event_loop_monitor` |
@@ -81,6 +81,19 @@ classification, telemetry instruments and outcome mapping, control/completion st
 purge or maintenance policy. Transient failures retain original order without settlement;
 deterministic failures shrink toward `min_batch_size` and reject only at the poison threshold;
 bounded drain failure retains work for `run_periodic`.
+
+Held deliveries stay unacknowledged during transient backoff, so a long database outage can
+outlast the broker's `consumer_timeout` (RabbitMQ default 30 minutes) and close the channel.
+Set `BatchPolicy.max_hold_s` below that timeout: a delivery held longer than the bound while its
+key is in transient backoff is returned with `nack(requeue=True)` (never acked, never lost) and
+reported to `BatchObserver.settled` as `requeue` / `held_timeout`. The default `None` keeps the
+unbounded hold, so existing consumers are unchanged until they opt in.
+
+`PostgreSQLFailureClassifier` is the shared `FailureClassifier` for PostgreSQL. Connection-class
+SQLSTATEs (08, 40, 53, 55, 57, 58, F0) and an `OperationalError` or `InterfaceError` with no
+SQLSTATE are transient; any other server-reported `OperationalError` (for example
+`ProgramLimitExceeded`, 54000) is deterministic. `AsyncPostgreSQLPool` logs the latter as a
+permanent database error, not a connection error.
 
 The delivery lifecycle, the batch engine, and `WriteAdmission` with its `handler()`, `slot()`,
 and bounded `drain()` are all present from immutable revision

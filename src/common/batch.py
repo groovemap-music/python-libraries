@@ -47,6 +47,11 @@ class BatchPolicy:
     backoff_multiplier: float
     max_drain_retries: int
     max_poison_retries: int
+    # Longest a delivery may stay unacknowledged while its key is in transient backoff. Set it
+    # below the broker's consumer_timeout (RabbitMQ default 30 minutes): past the bound the
+    # delivery is returned with nack(requeue=True) instead of being held until the broker closes
+    # the channel. None keeps the historical unbounded hold.
+    max_hold_s: float | None = None
 
     def __post_init__(self) -> None:
         positive = (
@@ -63,6 +68,8 @@ class BatchPolicy:
         )
         if any(value <= 0 for value in positive):
             raise ValueError("batch policy values must be positive")
+        if self.max_hold_s is not None and (isinstance(self.max_hold_s, bool) or not self.max_hold_s > 0):
+            raise ValueError("batch policy max_hold_s must be positive when set")
         if self.min_batch_size > self.batch_size:
             raise ValueError("min_batch_size cannot exceed batch_size")
 
@@ -82,6 +89,7 @@ class _Pending[PayloadT]:
     payload: PayloadT
     delivery: Delivery
     span_context: object | None
+    received_at: float = 0.0
 
 
 class _IsolatedContext:
@@ -149,7 +157,7 @@ class AsyncBatchEngine[KeyT, PayloadT]:
             raise KeyError(key)
         await self._capacity.acquire()
         try:
-            self._queues[key].append(_Pending(payload, delivery, span_context))
+            self._queues[key].append(_Pending(payload, delivery, span_context, monotonic()))
         except BaseException:
             self._capacity.release()
             raise
@@ -191,10 +199,39 @@ class AsyncBatchEngine[KeyT, PayloadT]:
                 self._capacity.release()
                 self._observe_settled(key, result, started, span)
 
+    async def _release_expired(self, key: KeyT) -> None:
+        """Return deliveries held past ``max_hold_s`` during transient backoff to the broker.
+
+        ``nack(requeue=True)`` loses nothing: the broker redelivers the message and the consumer
+        submits it again. Only the longest-held prefix is released, so surviving items keep their
+        order. A settlement failure leaves the unreleased tail queued, as in :meth:`_settle`.
+        """
+        limit = self._policy.max_hold_s
+        if limit is None or self._transient_attempts[key] == 0:
+            return
+        queue = self._queues[key]
+        now = monotonic()
+        while queue and now - queue[0].received_at >= limit:
+            item = queue.popleft()
+            try:
+                await item.delivery.nack(requeue=True)
+            except BaseException:
+                queue.appendleft(item)
+                raise
+            self._capacity.release()
+            with contextlib.suppress(Exception):
+                self._observer.settled(
+                    entity=str(key),
+                    result=DeliveryResult(Settlement.REQUEUE, "held_timeout"),
+                    duration_s=now - item.received_at,
+                    span=None,
+                )
+
     async def flush(self, key: KeyT) -> bool:
         if key not in self._queues:
             raise KeyError(key)
         async with self._locks[key]:
+            await self._release_expired(key)
             no_progress = 0
             while self._queues[key]:
                 if monotonic() < self._retry_at[key]:
