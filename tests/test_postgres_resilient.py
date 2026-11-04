@@ -1531,12 +1531,12 @@ class TestPostgreSQLFailureClassification:
         "error",
         [
             psycopg_errors.ProgramLimitExceeded("index row size exceeds btree maximum"),
-            psycopg_errors.InvalidPassword("bad password"),
+            psycopg_errors.StatementTooComplex("too complex"),
             psycopg_errors.TooManyColumns("too many columns"),
-            psycopg_errors.InvalidAuthorizationSpecification("rejected"),
+            psycopg_errors.TooManyArguments("too many arguments"),
         ],
     )
-    def test_server_reported_non_connection_operational_errors_are_permanent(self, error: Exception) -> None:
+    def test_data_caused_operational_errors_are_permanent(self, error: Exception) -> None:
         assert isinstance(error, OperationalError)
         assert is_permanent_operational_error(error)
         assert PostgreSQLFailureClassifier()(error) is FailureKind.DETERMINISTIC
@@ -1555,11 +1555,20 @@ class TestPostgreSQLFailureClassification:
             psycopg_errors.LockNotAvailable("locked"),
             psycopg_errors.IoError("io"),
             psycopg_errors.ConfigFileError("config"),
+            psycopg_errors.InvalidPassword("bad password"),
+            psycopg_errors.InvalidAuthorizationSpecification("rejected"),
+            psycopg_errors.FdwError("fdw"),
             DatabaseUnavailableError("circuit open"),
             OSError("unknown infrastructure"),
         ],
     )
     def test_connection_class_and_sqlstate_less_failures_stay_transient(self, error: Exception) -> None:
+        assert not is_permanent_operational_error(error)
+        assert PostgreSQLFailureClassifier()(error) is FailureKind.TRANSIENT
+
+    def test_unlisted_sqlstate_class_stays_transient(self) -> None:
+        error = OperationalError("future server verdict")
+        error.sqlstate = "ZZ001"  # type: ignore[misc]
         assert not is_permanent_operational_error(error)
         assert PostgreSQLFailureClassifier()(error) is FailureKind.TRANSIENT
 

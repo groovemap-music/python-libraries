@@ -29,35 +29,38 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# SQLSTATE classes whose cause is the server, the connection or its resources, so the same
-# statement can succeed later: 08 connection exception, 40 transaction rollback (serialization
-# failure, deadlock), 53 insufficient resources, 55 object not in prerequisite state, 57 operator
-# intervention (admin shutdown, cannot connect now, query cancel), 58 system error, F0 config file.
-TRANSIENT_SQLSTATE_CLASSES = frozenset({"08", "40", "53", "55", "57", "58", "F0"})
+# SQLSTATE classes of OperationalError that are caused by the data or statement itself, so
+# retrying the same record can never succeed. Deliberately an explicit allow-list: dead-lettering
+# a healthy record is worse than retrying a doomed one, so every other class stays transient.
+#   54 program limit exceeded (index row size, too many columns/arguments, statement too complex).
+# Not listed, so retried: 08 connection, 28 invalid authorization (credentials/session, not the
+# record), 40 rollback, 53 resources, 55 prerequisite state, 57 operator intervention, 58 system,
+# F0 config, HV foreign-data wrapper, and any class not yet reviewed.
+PERMANENT_SQLSTATE_CLASSES = frozenset({"54"})
 
 
 def is_permanent_operational_error(error: BaseException) -> bool:
-    """True for a server-reported ``OperationalError`` that is not a connection-class failure.
+    """True for an ``OperationalError`` whose SQLSTATE class is known to be caused by the data.
 
     psycopg raises e.g. ``ProgramLimitExceeded`` (54000, "index row size exceeds btree maximum")
     as an ``OperationalError`` subclass. It comes from the record, not the connection, so retrying
-    can never help. An ``OperationalError`` with no SQLSTATE (client-side connection loss, pool
-    timeout) carries no server verdict and is not permanent.
+    can never help. An ``OperationalError`` with no SQLSTATE, or with any class outside
+    ``PERMANENT_SQLSTATE_CLASSES``, is not permanent.
     """
     if not isinstance(error, OperationalError):
         return False
     sqlstate = getattr(error, "sqlstate", None)
     if not isinstance(sqlstate, str) or len(sqlstate) != 5:
         return False
-    return sqlstate[:2] not in TRANSIENT_SQLSTATE_CLASSES
+    return sqlstate[:2] in PERMANENT_SQLSTATE_CLASSES
 
 
 class PostgreSQLFailureClassifier:
     """Map PostgreSQL failures onto the shared retry taxonomy (``FailureClassifier``).
 
-    Connection-class failures (SQLSTATE 08, 40, 53, 55, 57, 58, F0 and ``OperationalError`` or
-    ``InterfaceError`` with no SQLSTATE) are transient. Other server-reported
-    ``OperationalError`` values, ``DataError``, ``IntegrityError``, ``ValueError`` and
+    An ``OperationalError`` is deterministic only for SQLSTATE classes listed in
+    ``PERMANENT_SQLSTATE_CLASSES`` (class 54); every other ``OperationalError`` and
+    ``InterfaceError`` is transient, including class 28 and unknown classes. ``DataError``, ``IntegrityError``, ``ValueError`` and
     ``RuntimeError`` are deterministic. Unknown exceptions stay transient so a valid record is
     never dead-lettered by an unrecognised infrastructure failure.
     """
