@@ -330,3 +330,31 @@ class _StubAsyncSession:
 class _StubAsyncDriver:
     def session(self, **_kwargs: Any) -> _StubAsyncSession:
         return _StubAsyncSession()
+
+
+def test_pool_gauges_and_wait_histogram_report_pool_state(collector: Collector) -> None:
+    class FakePool:
+        pool_name = "pool-probe"
+        max_connections = 7
+
+        def pool_stats(self) -> tuple[int, int, int]:
+            return 3, 2, 1
+
+    pool = FakePool()
+    runtime_metrics.register_pool(pool)  # type: ignore[arg-type]
+    runtime_metrics.record_pool_wait("pool-probe", 0.25)
+    runtime_metrics.record_pool_connection_closed("pool-probe", "idle")
+
+    def pool_points(name: str) -> dict[str, Any]:
+        return {
+            tuple(sorted(dict(p.attributes).items())): p.value
+            for p in collector.points(name)
+            if dict(p.attributes).get("db.client.connection.pool.name") == "pool-probe"
+        }
+
+    states = {dict(k)["db.client.connection.state"]: v for k, v in pool_points(runtime_metrics.DB_CLIENT_CONNECTION_COUNT).items()}
+    assert states == {"idle": 3, "used": 2}
+    assert list(pool_points(runtime_metrics.DB_CLIENT_CONNECTION_PENDING).values()) == [1]
+    assert list(pool_points(runtime_metrics.DB_CLIENT_CONNECTION_MAX).values()) == [7]
+    assert collector.metrics()[runtime_metrics.DB_CLIENT_CONNECTION_WAIT_TIME].unit == "s"
+    assert collector.attributes(runtime_metrics.POOL_CONNECTIONS_CLOSED) == [{"db.client.connection.pool.name": "pool-probe", "reason": "idle"}]
