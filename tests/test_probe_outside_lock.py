@@ -7,7 +7,7 @@ Bolt pool: a fake cannot reproduce the driver's real acquisition wait.
 import asyncio
 import os
 import time
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -479,3 +479,66 @@ async def test_live_postgres_connection_running_a_long_statement_is_not_replaced
     assert pg._failed_probes == 0
     await work  # the in-flight statement ran to completion on the original connection
     await pg.close()
+
+
+class TestNeo4jProgressEvidence:
+    """Only a session that completed counts as progress; failed ones must not extend the busy window."""
+
+    @pytest.mark.asyncio
+    async def test_failed_sessions_do_not_refresh_progress(self) -> None:
+        from neo4j.exceptions import ConnectionAcquisitionTimeoutError, ServiceUnavailable, SessionExpired
+
+        driver = AsyncResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"), max_connection_pool_size=2)
+        stale = time.monotonic() - 1000.0
+        driver._connection = Mock()
+        driver._last_healthy_at = time.monotonic()
+        driver.health_check_ttl = 3600.0
+        for exc in (ServiceUnavailable("down"), SessionExpired("gone"), ConnectionAcquisitionTimeoutError("pool")):
+            driver._last_session_activity_at = stale
+            driver._connection.session = Mock(side_effect=exc)
+            with pytest.raises(type(exc)):
+                async with driver.session(database="neo4j"):
+                    pytest.fail("session body must not run")  # pragma: no cover
+            assert driver._last_session_activity_at == stale, type(exc).__name__
+            assert driver._open_sessions == 0
+
+    @pytest.mark.asyncio
+    async def test_completed_session_refreshes_progress(self) -> None:
+        driver = AsyncResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"), max_connection_pool_size=2)
+        fake_session = AsyncMock()
+        fake = Mock()
+        fake.session = Mock(return_value=fake_session)
+        fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+        fake_session.__aexit__ = AsyncMock(return_value=False)
+        driver._connection = fake
+        driver._last_healthy_at = time.monotonic()
+        driver.health_check_ttl = 3600.0
+        driver._last_session_activity_at = time.monotonic() - 1000.0
+        async with driver.session(database="neo4j"):
+            assert driver._open_sessions == 1
+        assert time.monotonic() - driver._last_session_activity_at < 5.0
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _URI, reason="NEO4J_URI not set")
+@pytest.mark.asyncio
+async def test_live_neo4j_failed_session_is_not_progress_but_completed_one_is() -> None:
+    from neo4j.exceptions import ClientError
+
+    driver = _live_driver()
+    await driver.get_connection()
+    driver._last_session_activity_at = time.monotonic() - 1000.0
+    stale = driver._last_session_activity_at
+    with pytest.raises(ClientError):  # the server answers a malformed query with an error
+        async with driver.session(database="neo4j") as session:
+            await session.run("THIS IS NOT CYPHER")
+    assert driver._last_session_activity_at == stale
+    with pytest.raises(ValueError, match="boom"):  # a borrower failing for its own reasons is not progress either
+        async with driver.session(database="neo4j"):
+            raise ValueError("boom")
+    assert driver._last_session_activity_at == stale
+    async with driver.session(database="neo4j") as session:
+        result = await session.run("RETURN 1 AS n")
+        assert (await result.single())["n"] == 1
+    assert time.monotonic() - driver._last_session_activity_at < 5.0
+    await driver.close()
