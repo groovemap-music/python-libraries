@@ -5,10 +5,12 @@ from contextlib import suppress
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from psycopg import errors as psycopg_errors
 from psycopg.errors import InterfaceError, OperationalError
 
-from common.db_resilience import CircuitState
-from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL
+from common.db_resilience import CircuitState, DatabaseUnavailableError
+from common.delivery import FailureKind
+from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL, PostgreSQLFailureClassifier, is_permanent_operational_error
 
 
 class TestAsyncResilientPostgreSQL:
@@ -1520,3 +1522,81 @@ class TestPgPoolBatchRegressions:
         # Replenished exactly up to min_connections and never past max_connections.
         assert pool.active_connections == 2
         assert pool.active_connections <= pool.max_connections
+
+
+class TestPostgreSQLFailureClassification:
+    """SQLSTATE-aware classification with real psycopg error classes."""
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            psycopg_errors.ProgramLimitExceeded("index row size exceeds btree maximum"),
+            psycopg_errors.StatementTooComplex("too complex"),
+            psycopg_errors.TooManyColumns("too many columns"),
+            psycopg_errors.TooManyArguments("too many arguments"),
+        ],
+    )
+    def test_data_caused_operational_errors_are_permanent(self, error: Exception) -> None:
+        assert isinstance(error, OperationalError)
+        assert is_permanent_operational_error(error)
+        assert PostgreSQLFailureClassifier()(error) is FailureKind.DETERMINISTIC
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            OperationalError("connection lost"),
+            InterfaceError("connection already closed"),
+            psycopg_errors.AdminShutdown("shutting down"),
+            psycopg_errors.CannotConnectNow("starting up"),
+            psycopg_errors.ConnectionFailure("lost"),
+            psycopg_errors.SerializationFailure("retry"),
+            psycopg_errors.DeadlockDetected("deadlock"),
+            psycopg_errors.OutOfMemory("oom"),
+            psycopg_errors.LockNotAvailable("locked"),
+            psycopg_errors.IoError("io"),
+            psycopg_errors.ConfigFileError("config"),
+            psycopg_errors.InvalidPassword("bad password"),
+            psycopg_errors.InvalidAuthorizationSpecification("rejected"),
+            psycopg_errors.FdwError("fdw"),
+            DatabaseUnavailableError("circuit open"),
+            OSError("unknown infrastructure"),
+        ],
+    )
+    def test_connection_class_and_sqlstate_less_failures_stay_transient(self, error: Exception) -> None:
+        assert not is_permanent_operational_error(error)
+        assert PostgreSQLFailureClassifier()(error) is FailureKind.TRANSIENT
+
+    def test_unlisted_sqlstate_class_stays_transient(self) -> None:
+        error = OperationalError("future server verdict")
+        error.sqlstate = "ZZ001"  # type: ignore[misc]
+        assert not is_permanent_operational_error(error)
+        assert PostgreSQLFailureClassifier()(error) is FailureKind.TRANSIENT
+
+    @pytest.mark.parametrize("error", [psycopg_errors.DataError("bad"), psycopg_errors.UniqueViolation("dup"), ValueError("x"), RuntimeError("x")])
+    def test_data_and_application_errors_are_deterministic(self, error: Exception) -> None:
+        assert PostgreSQLFailureClassifier()(error) is FailureKind.DETERMINISTIC
+
+    @pytest.mark.parametrize(
+        ("error", "expected", "unexpected"),
+        [
+            (psycopg_errors.ProgramLimitExceeded("too big"), "Permanent database error", "Connection error during operation"),
+            (OperationalError("connection lost"), "Connection error during operation", "Permanent database error"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_pool_logs_each_kind_by_name_and_discards_the_connection(
+        self, error: Exception, expected: str, unexpected: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        pool = AsyncPostgreSQLPool(connection_params={}, max_connections=2, min_connections=0)
+        conn = AsyncMock()
+        conn.closed = False
+        pool._create_connection = AsyncMock(return_value=conn)  # type: ignore[method-assign]
+        pool._test_connection = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        with caplog.at_level("WARNING", logger="common.postgres_resilient"), pytest.raises(type(error)):
+            async with pool.connection():
+                raise error
+        assert expected in caplog.text
+        assert unexpected not in caplog.text
+        conn.close.assert_awaited()
+        assert pool.active_connections == 0
+        await pool.close()

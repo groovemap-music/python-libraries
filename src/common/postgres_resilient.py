@@ -8,9 +8,10 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
-from psycopg.errors import DatabaseError, InterfaceError, OperationalError
+from psycopg.errors import DatabaseError, DataError, IntegrityError, InterfaceError, OperationalError
 
 from common import runtime_metrics, tracing
+from common.delivery import FailureKind
 
 from .db_resilience import (
     AsyncResilientConnection,
@@ -27,6 +28,53 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+# SQLSTATE classes of OperationalError that are caused by the data or statement itself, so
+# retrying the same record can never succeed. Deliberately an explicit allow-list: dead-lettering
+# a healthy record is worse than retrying a doomed one, so every other class stays transient.
+#   54 program limit exceeded (index row size, too many columns/arguments, statement too complex).
+# Not listed, so retried: 08 connection, 28 invalid authorization (credentials/session, not the
+# record), 40 rollback, 53 resources, 55 prerequisite state, 57 operator intervention, 58 system,
+# F0 config, HV foreign-data wrapper, and any class not yet reviewed.
+PERMANENT_SQLSTATE_CLASSES = frozenset({"54"})
+
+
+def is_permanent_operational_error(error: BaseException) -> bool:
+    """True for an ``OperationalError`` whose SQLSTATE class is known to be caused by the data.
+
+    psycopg raises e.g. ``ProgramLimitExceeded`` (54000, "index row size exceeds btree maximum")
+    as an ``OperationalError`` subclass. It comes from the record, not the connection, so retrying
+    can never help. An ``OperationalError`` with no SQLSTATE, or with any class outside
+    ``PERMANENT_SQLSTATE_CLASSES``, is not permanent.
+    """
+    if not isinstance(error, OperationalError):
+        return False
+    sqlstate = getattr(error, "sqlstate", None)
+    if not isinstance(sqlstate, str) or len(sqlstate) != 5:
+        return False
+    return sqlstate[:2] in PERMANENT_SQLSTATE_CLASSES
+
+
+class PostgreSQLFailureClassifier:
+    """Map PostgreSQL failures onto the shared retry taxonomy (``FailureClassifier``).
+
+    An ``OperationalError`` is deterministic only for SQLSTATE classes listed in
+    ``PERMANENT_SQLSTATE_CLASSES`` (class 54); every other ``OperationalError`` and
+    ``InterfaceError`` is transient, including class 28 and unknown classes. ``DataError``, ``IntegrityError``, ``ValueError`` and
+    ``RuntimeError`` are deterministic. Unknown exceptions stay transient so a valid record is
+    never dead-lettered by an unrecognised infrastructure failure.
+    """
+
+    _DETERMINISTIC = (DataError, IntegrityError, ValueError, RuntimeError)
+
+    def __call__(self, error: BaseException) -> FailureKind:
+        if is_permanent_operational_error(error):
+            return FailureKind.DETERMINISTIC
+        if isinstance(error, (InterfaceError, OperationalError, DatabaseUnavailableError)):
+            return FailureKind.TRANSIENT
+        if isinstance(error, self._DETERMINISTIC):
+            return FailureKind.DETERMINISTIC
+        return FailureKind.TRANSIENT
 
 
 class AsyncResilientPostgreSQL(AsyncResilientConnection[Any]):
@@ -411,7 +459,21 @@ class AsyncPostgreSQLPool:
 
         try:
             yield conn
-        except (InterfaceError, OperationalError) as e:
+        except OperationalError as e:
+            if is_permanent_operational_error(e):
+                # The server answered with a verdict about the statement or data (e.g.
+                # ProgramLimitExceeded), not a connection problem. Say so; the connection is
+                # still discarded below because its transaction state is unknown.
+                logger.warning(f"⚠️ Permanent database error during operation (SQLSTATE {e.sqlstate}), not a connection failure: {e}")
+            else:
+                logger.warning(f"⚠️ Connection error during operation: {e}")
+            with contextlib.suppress(Exception):
+                await conn.close()
+            async with self._lock:
+                self.active_connections = max(0, self.active_connections - 1)
+            conn = None
+            raise
+        except InterfaceError as e:
             # Connection error during use - don't return to pool
             logger.warning(f"⚠️ Connection error during operation: {e}")
             with contextlib.suppress(Exception):

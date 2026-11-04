@@ -381,3 +381,68 @@ async def test_batch_enqueue_needs_no_write_slot_and_cancelled_flush_retains_wor
     # Settlement also returned the independent pending capacity.
     await batch.submit("release", 2, StrictDelivery())
     assert await batch.flush("release") is True
+
+
+@pytest.mark.asyncio
+async def test_max_hold_requeues_deliveries_held_past_the_bound_during_outage() -> None:
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    observer = Observer()
+    batch = engine(sink, observer, max_hold_s=0.05, backoff_initial_s=0.01, backoff_max_s=0.01)
+    deliveries = [StrictDelivery() for _ in range(3)]
+    for value, delivery in enumerate(deliveries):
+        await batch.submit("release", value, delivery)
+
+    assert await batch.flush("release") is False
+    assert all(delivery.calls == [] for delivery in deliveries)
+
+    await asyncio.sleep(0.06)
+    assert await batch.flush("release") is True
+
+    # Nothing is lost or acked: every delivery goes back to the broker, in order, once.
+    assert [delivery.calls for delivery in deliveries] == [["nack:True"]] * 3
+    assert batch.snapshot()["pending"]["release"] == 0  # type: ignore[index]
+    outcomes = [call.kwargs["result"] for call in observer.settled.call_args_list]
+    assert [(r.settlement, r.outcome) for r in outcomes] == [(Settlement.REQUEUE, "held_timeout")] * 3
+    # Capacity is returned: a full max_pending of new work is accepted.
+    for value in range(20):
+        await asyncio.wait_for(batch.submit("release", value, StrictDelivery()), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_max_hold_leaves_young_deliveries_and_default_is_unbounded() -> None:
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    for limit in (None, 60.0):
+        batch = engine(sink, max_hold_s=limit)
+        delivery = StrictDelivery()
+        await batch.submit("release", 1, delivery)
+        await batch.flush("release")
+        await asyncio.sleep(0.02)
+        await batch.flush("release")
+        assert delivery.calls == []
+        assert batch.snapshot()["pending"]["release"] == 1  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_max_hold_keeps_unreleased_tail_when_requeue_fails() -> None:
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    batch = engine(sink, max_hold_s=0.01)
+    failing = StrictDelivery(nack_error=RuntimeError("channel closed"))
+    survivor = StrictDelivery()
+    await batch.submit("release", 1, failing)
+    await batch.submit("release", 2, survivor)
+    await batch.flush("release")
+    await asyncio.sleep(0.02)
+
+    with pytest.raises(RuntimeError):
+        await batch.flush("release")
+    assert batch.snapshot()["pending"]["release"] == 2  # type: ignore[index]
+    assert survivor.calls == []
+
+
+@pytest.mark.parametrize("value", [0, -1.0, True])
+def test_max_hold_must_be_positive_when_set(value: object) -> None:
+    with pytest.raises(ValueError, match="max_hold_s"):
+        policy(max_hold_s=value)
