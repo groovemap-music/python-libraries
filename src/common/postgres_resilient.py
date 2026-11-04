@@ -3,8 +3,9 @@
 import asyncio
 import contextlib
 import logging
+import weakref
 from contextlib import asynccontextmanager
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
@@ -148,12 +149,17 @@ class AsyncPostgreSQLPool:
         min_connections: int = 2,
         max_retries: int = 5,
         health_check_interval: int = 30,
+        checkout_probe_ttl: float = 30.0,
     ):
         self.connection_params = connection_params
         self.max_connections = max_connections
         self.min_connections = min_connections
         self.max_retries = max_retries
         self.health_check_interval = health_check_interval
+        # A pooled connection verified (probe or successful use) within this many seconds is handed out
+        # without the ``SELECT 1`` round trip. 0 restores the probe on every checkout.
+        self.checkout_probe_ttl = checkout_probe_ttl
+        self._verified_at: weakref.WeakKeyDictionary[psycopg.AsyncConnection[Any], float] = weakref.WeakKeyDictionary()
 
         # Connection pool using asyncio.Queue
         # Async primitives are created lazily in initialize() to bind to the correct event loop.
@@ -263,19 +269,34 @@ class AsyncPostgreSQLPool:
             with contextlib.suppress(Exception):
                 await conn.close()
             raise
+        self._mark_verified(conn)
         return conn
 
     async def _test_connection(self, conn: psycopg.AsyncConnection[Any]) -> bool:
-        """Test if a connection is healthy."""
+        """Test if a connection is healthy, recording a pass so the checkout can skip a re-probe."""
         try:
             if conn.closed:
                 return False
             async with conn.cursor() as cursor:
                 await cursor.execute("SELECT 1")
                 result = await cursor.fetchone()
-                return result is not None and result[0] == 1
+                healthy = result is not None and result[0] == 1
         except Exception:
             return False
+        if healthy:
+            self._mark_verified(conn)
+        return healthy
+
+    def _mark_verified(self, conn: psycopg.AsyncConnection[Any]) -> None:
+        with contextlib.suppress(TypeError):  # not weak-referenceable: simply always re-probed
+            self._verified_at[conn] = monotonic()
+
+    def _recently_verified(self, conn: psycopg.AsyncConnection[Any]) -> bool:
+        """True when the checkout probe can be skipped: verified inside the TTL and locally not closed or broken."""
+        if self.checkout_probe_ttl <= 0 or conn.closed or getattr(conn, "broken", False) is True:
+            return False
+        verified = self._verified_at.get(conn)
+        return verified is not None and monotonic() - verified < self.checkout_probe_ttl
 
     async def _health_check_loop(self) -> None:
         """Background task to check connection health periodically."""
@@ -412,7 +433,7 @@ class AsyncPostgreSQLPool:
                 # health-checking a checked-out connection, close it and release its slot so
                 # the capacity is not stranded (active_connections leaked) forever.
                 try:
-                    healthy = True if conn is None else await self._test_connection(conn)
+                    healthy = True if conn is None else (self._recently_verified(conn) or await self._test_connection(conn))
                 except BaseException:
                     if conn is not None:
                         with contextlib.suppress(Exception):
@@ -467,6 +488,9 @@ class AsyncPostgreSQLPool:
                 logger.warning(f"⚠️ Permanent database error during operation (SQLSTATE {e.sqlstate}), not a connection failure: {e}")
             else:
                 logger.warning(f"⚠️ Connection error during operation: {e}")
+            # A dead connection reached the caller inside the probe TTL; its idle siblings were most
+            # likely lost with it (server restart, failover), so make the next checkouts probe again.
+            self._verified_at.clear()
             with contextlib.suppress(Exception):
                 await conn.close()
             async with self._lock:
@@ -476,6 +500,7 @@ class AsyncPostgreSQLPool:
         except InterfaceError as e:
             # Connection error during use - don't return to pool
             logger.warning(f"⚠️ Connection error during operation: {e}")
+            self._verified_at.clear()
             with contextlib.suppress(Exception):
                 await conn.close()
             async with self._lock:
@@ -503,6 +528,7 @@ class AsyncPostgreSQLPool:
                     async with self._lock:
                         self.active_connections = max(0, self.active_connections - 1)
                 if autocommit_ok:
+                    self._mark_verified(conn)  # it just served a caller without a connection error
                     try:
                         self.connections.put_nowait(conn)
                     except asyncio.QueueFull:
