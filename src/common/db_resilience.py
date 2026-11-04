@@ -540,7 +540,7 @@ class AsyncResilientConnection[T]:
             else:
                 reconnect = self._start_reconnect_locked()
 
-        if probe is not None:
+        if probe is not None and connection is not None:
             # Outside the lock: a slow probe delays only this caller, and only up to ``probe_timeout``.
             if await asyncio.shield(probe):
                 return connection
