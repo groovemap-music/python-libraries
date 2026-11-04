@@ -5,6 +5,7 @@
 - [Agent-tools public API](agent-tools.md)
 - [Compatibility and release policy](compatibility-and-releases.md)
 - [Coverage baseline and ratchet policy](coverage.md)
+- [Database layer and small query sites performance audit, 2026-11-04](performance-audit-2026-11-04.md)
 - [Historical consumer compatibility and credential-removal evidence](consumer-compatibility.md)
 - [Publication-readiness attestation and current release gate](publication-readiness.md)
 - [Completed public-library cutover and dormant private-access compatibility](../private-package-auth.md)
