@@ -150,6 +150,9 @@ class AsyncPostgreSQLPool:
         max_retries: int = 5,
         health_check_interval: int = 30,
         checkout_probe_ttl: float = 30.0,
+        idle_timeout: float | None = 300.0,
+        max_lifetime: float | None = 1800.0,
+        pool_name: str = "postgresql",
     ):
         self.connection_params = connection_params
         self.max_connections = max_connections
@@ -159,6 +162,14 @@ class AsyncPostgreSQLPool:
         # A pooled connection verified (probe or successful use) within this many seconds is handed out
         # without the ``SELECT 1`` round trip. 0 restores the probe on every checkout.
         self.checkout_probe_ttl = checkout_probe_ttl
+        # Idle connections beyond ``min_connections`` are closed after ``idle_timeout`` seconds unused, and any idle
+        # connection older than ``max_lifetime`` seconds is recycled. None disables the respective rule.
+        self.idle_timeout = idle_timeout
+        self.max_lifetime = max_lifetime
+        self.pool_name = pool_name
+        self._created_at: weakref.WeakKeyDictionary[psycopg.AsyncConnection[Any], float] = weakref.WeakKeyDictionary()
+        self._idle_since: weakref.WeakKeyDictionary[psycopg.AsyncConnection[Any], float] = weakref.WeakKeyDictionary()
+        self._pending = 0  # checkouts currently waiting for a connection
         self._verified_at: weakref.WeakKeyDictionary[psycopg.AsyncConnection[Any], float] = weakref.WeakKeyDictionary()
 
         # Connection pool using asyncio.Queue
@@ -191,6 +202,7 @@ class AsyncPostgreSQLPool:
         # This is safe to create in __init__ because it's only used as a gate —
         # it doesn't protect event-loop-bound state.
         self._init_lock: asyncio.Lock | None = None
+        runtime_metrics.register_pool(self)
 
     async def initialize(self) -> None:
         """Initialize the connection pool with minimum connections."""
@@ -270,7 +282,15 @@ class AsyncPostgreSQLPool:
                 await conn.close()
             raise
         self._mark_verified(conn)
+        now = monotonic()
+        self._created_at[conn] = now
+        self._idle_since[conn] = now
         return conn
+
+    def pool_stats(self) -> tuple[int, int, int]:
+        """Return (idle, in_use, pending checkouts) for the pool gauges."""
+        idle = self.connections.qsize() if self.connections is not None else 0
+        return idle, max(0, self.active_connections - idle), self._pending
 
     async def _test_connection(self, conn: psycopg.AsyncConnection[Any]) -> bool:
         """Test if a connection is healthy, recording a pass so the checkout can skip a re-probe."""
@@ -298,20 +318,46 @@ class AsyncPostgreSQLPool:
         verified = self._verified_at.get(conn)
         return verified is not None and monotonic() - verified < self.checkout_probe_ttl
 
+    def _retire_reason(self, conn: psycopg.AsyncConnection[Any], *, keep_floor_ok: bool) -> str | None:
+        """Why an idle, healthy connection should be closed now: ``lifetime``, ``idle`` or None to keep it.
+
+        Lifetime recycling always applies (the replenish step restores ``min_connections``); idle shrinking only
+        applies while the pool would still hold ``min_connections`` afterwards.
+        """
+        now = monotonic()
+        created = self._created_at.get(conn)
+        if self.max_lifetime is not None and created is not None and now - created >= self.max_lifetime:
+            return "lifetime"
+        idle_since = self._idle_since.get(conn)
+        if self.idle_timeout is not None and keep_floor_ok and idle_since is not None and now - idle_since >= self.idle_timeout:
+            return "idle"
+        return None
+
     async def _health_check_loop(self) -> None:
         """Background task to check connection health periodically."""
         while not self._closed:
             await asyncio.sleep(self.health_check_interval)
 
             # Check and remove unhealthy connections
-            healthy_connections = []
+            healthy_connections: list[psycopg.AsyncConnection[Any]] = []
             check_count = min(self.connections.qsize(), self.max_connections)
 
-            for _ in range(check_count):
+            for checked in range(check_count):
                 try:
                     conn = self.connections.get_nowait()
                     if await self._test_connection(conn):
-                        healthy_connections.append(conn)
+                        retire = self._retire_reason(
+                            conn, keep_floor_ok=len(healthy_connections) + (check_count - checked - 1) >= self.min_connections
+                        )
+                        if retire is None:
+                            healthy_connections.append(conn)
+                        else:
+                            logger.info(f"🐘 Closing pooled connection ({retire})")
+                            runtime_metrics.record_pool_connection_closed(self.pool_name, retire)
+                            with contextlib.suppress(Exception):
+                                await conn.close()
+                            async with self._lock:
+                                self.active_connections = max(0, self.active_connections - 1)
                     else:
                         logger.warning("⚠️ Removing unhealthy connection from pool")
                         with contextlib.suppress(Exception):
@@ -389,94 +435,104 @@ class AsyncPostgreSQLPool:
         retry_count = 0
         last_error = None
 
-        while retry_count < self.max_retries:
-            try:
-                # Try to get existing connection (non-blocking)
+        wait_started = perf_counter()
+        wait_error: str | None = None
+        self._pending += 1
+        try:
+            while retry_count < self.max_retries:
                 try:
-                    conn = self.connections.get_nowait()
-                except asyncio.QueueEmpty:
-                    # Pool is empty - try to create a new connection
-                    created = False
-                    async with self._lock:
-                        if self.active_connections < self.max_connections:
-                            self.active_connections += 1
-                            created = True
+                    # Try to get existing connection (non-blocking)
+                    try:
+                        conn = self.connections.get_nowait()
+                    except asyncio.QueueEmpty:
+                        # Pool is empty - try to create a new connection
+                        created = False
+                        async with self._lock:
+                            if self.active_connections < self.max_connections:
+                                self.active_connections += 1
+                                created = True
 
-                    if created:
+                        if created:
+                            try:
+                                conn = await self._create_connection()
+                            except BaseException:
+                                # BaseException (not just Exception) so asyncio.CancelledError —
+                                # which derives from BaseException in Python 3.13 and can land inside
+                                # AsyncConnection.connect() when the caller task is cancelled — also
+                                # rolls back the reserved slot instead of leaking capacity permanently.
+                                async with self._lock:
+                                    self.active_connections = max(0, self.active_connections - 1)
+                                raise
+                        else:
+                            # Pool exhausted - wait for a connection to be returned
+                            try:
+                                conn = await asyncio.wait_for(
+                                    self.connections.get(),
+                                    timeout=self.backoff.get_delay(retry_count),
+                                )
+                            except TimeoutError:
+                                retry_count += 1
+                                if retry_count < self.max_retries:
+                                    logger.warning(
+                                        f"⚠️ Connection pool exhausted (attempt {retry_count}/{self.max_retries}), waiting for available connection..."
+                                    )
+                                continue
+
+                    # Test connection health. Guard the probe against BaseException
+                    # (e.g. asyncio.CancelledError): if the acquiring task is cancelled while
+                    # health-checking a checked-out connection, close it and release its slot so
+                    # the capacity is not stranded (active_connections leaked) forever.
+                    try:
+                        healthy = True if conn is None else (self._recently_verified(conn) or await self._test_connection(conn))
+                    except BaseException:
+                        if conn is not None:
+                            with contextlib.suppress(Exception):
+                                await conn.close()
+                            async with self._lock:
+                                self.active_connections = max(0, self.active_connections - 1)
+                            conn = None
+                        raise
+                    if conn and not healthy:
+                        logger.warning("⚠️ Got unhealthy connection from pool, creating new one")
+                        with contextlib.suppress(Exception):
+                            await conn.close()
+                        # Drop the stale reference before attempting a replacement. If the
+                        # replacement create fails on every retry, `conn` must stay falsy so the
+                        # post-loop `if not conn` guard fires and raises the intended "Failed to
+                        # get PostgreSQL connection" error instead of yielding a CLOSED connection
+                        # (which would also cause active_connections to be decremented twice).
+                        conn = None
+                        # Replace unhealthy connection — no net change to active_connections
+                        # Keep counter stable to prevent TOCTOU races. Catch BaseException so a
+                        # CancelledError landing in the replacement create also releases the slot
+                        # that belonged to the discarded connection instead of leaking it.
                         try:
                             conn = await self._create_connection()
                         except BaseException:
-                            # BaseException (not just Exception) so asyncio.CancelledError —
-                            # which derives from BaseException in Python 3.13 and can land inside
-                            # AsyncConnection.connect() when the caller task is cancelled — also
-                            # rolls back the reserved slot instead of leaking capacity permanently.
                             async with self._lock:
                                 self.active_connections = max(0, self.active_connections - 1)
                             raise
-                    else:
-                        # Pool exhausted - wait for a connection to be returned
-                        try:
-                            conn = await asyncio.wait_for(
-                                self.connections.get(),
-                                timeout=self.backoff.get_delay(retry_count),
-                            )
-                        except TimeoutError:
-                            retry_count += 1
-                            if retry_count < self.max_retries:
-                                logger.warning(
-                                    f"⚠️ Connection pool exhausted (attempt {retry_count}/{self.max_retries}), waiting for available connection..."
-                                )
-                            continue
 
-                # Test connection health. Guard the probe against BaseException
-                # (e.g. asyncio.CancelledError): if the acquiring task is cancelled while
-                # health-checking a checked-out connection, close it and release its slot so
-                # the capacity is not stranded (active_connections leaked) forever.
-                try:
-                    healthy = True if conn is None else (self._recently_verified(conn) or await self._test_connection(conn))
-                except BaseException:
-                    if conn is not None:
-                        with contextlib.suppress(Exception):
-                            await conn.close()
-                        async with self._lock:
-                            self.active_connections = max(0, self.active_connections - 1)
-                        conn = None
-                    raise
-                if conn and not healthy:
-                    logger.warning("⚠️ Got unhealthy connection from pool, creating new one")
-                    with contextlib.suppress(Exception):
-                        await conn.close()
-                    # Drop the stale reference before attempting a replacement. If the
-                    # replacement create fails on every retry, `conn` must stay falsy so the
-                    # post-loop `if not conn` guard fires and raises the intended "Failed to
-                    # get PostgreSQL connection" error instead of yielding a CLOSED connection
-                    # (which would also cause active_connections to be decremented twice).
-                    conn = None
-                    # Replace unhealthy connection — no net change to active_connections
-                    # Keep counter stable to prevent TOCTOU races. Catch BaseException so a
-                    # CancelledError landing in the replacement create also releases the slot
-                    # that belonged to the discarded connection instead of leaking it.
-                    try:
-                        conn = await self._create_connection()
-                    except BaseException:
-                        async with self._lock:
-                            self.active_connections = max(0, self.active_connections - 1)
-                        raise
+                    if conn:
+                        break
 
-                if conn:
-                    break
+                except Exception as e:
+                    last_error = e
+                    retry_count += 1
 
-            except Exception as e:
-                last_error = e
-                retry_count += 1
+                    if retry_count < self.max_retries:
+                        delay = self.backoff.get_delay(retry_count - 1)
+                        logger.warning(f"⚠️ PostgreSQL connection attempt {retry_count} failed: {e}. Retrying in {delay:.1f} seconds...")
+                        await asyncio.sleep(delay)
 
-                if retry_count < self.max_retries:
-                    delay = self.backoff.get_delay(retry_count - 1)
-                    logger.warning(f"⚠️ PostgreSQL connection attempt {retry_count} failed: {e}. Retrying in {delay:.1f} seconds...")
-                    await asyncio.sleep(delay)
-
-        if not conn:
-            raise ConnectionEstablishmentError(f"Failed to get PostgreSQL connection after {self.max_retries} attempts") from last_error
+            if not conn:
+                raise ConnectionEstablishmentError(f"Failed to get PostgreSQL connection after {self.max_retries} attempts") from last_error
+        except Exception as exc:
+            wait_error = runtime_metrics.error_type_of(exc)
+            raise
+        finally:
+            self._pending -= 1
+            runtime_metrics.record_pool_wait(self.pool_name, perf_counter() - wait_started, wait_error)
 
         try:
             yield conn
@@ -529,6 +585,7 @@ class AsyncPostgreSQLPool:
                         self.active_connections = max(0, self.active_connections - 1)
                 if autocommit_ok:
                     self._mark_verified(conn)  # it just served a caller without a connection error
+                    self._idle_since[conn] = monotonic()
                     try:
                         self.connections.put_nowait(conn)
                     except asyncio.QueueFull:

@@ -14,7 +14,7 @@ attribute values are closed, low-cardinality sets — never ids, queries, hosts,
 
 import logging
 from threading import RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from weakref import WeakSet
 
 from common.telemetry import get_meter, provider_generation
@@ -27,6 +27,15 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from common.db_resilience import CircuitBreaker
 
+    class PoolStatsSource(Protocol):
+        """What the pool gauges read from a connection pool."""
+
+        pool_name: str
+        max_connections: int
+
+        def pool_stats(self) -> tuple[int, int, int]:
+            """Return (idle, in_use, pending_requests)."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +47,20 @@ MESSAGING_OPERATION_DURATION = "messaging.client.operation.duration"
 MESSAGING_SENT_MESSAGES = "messaging.client.sent.messages"
 PIPELINE_CIRCUIT_BREAKER_STATE = "groovemap.pipeline.circuit_breaker.state"
 PIPELINE_RECONNECTS = "groovemap.pipeline.reconnects"
+DB_CLIENT_CONNECTION_COUNT = "db.client.connection.count"
+DB_CLIENT_CONNECTION_MAX = "db.client.connection.max"
+DB_CLIENT_CONNECTION_PENDING = "db.client.connection.pending_requests"
+DB_CLIENT_CONNECTION_WAIT_TIME = "db.client.connection.wait_time"
+POOL_CONNECTIONS_CLOSED = "groovemap.pipeline.pool.connections_closed"
 
 MESSAGING_SYSTEM = "rabbitmq"
 
 # The circuit-breaker gauge reports one value per live breaker. A weak set keeps the callback
 # from pinning a breaker (and the pool behind it) alive after its owner is gone.
 _breakers: WeakSet[CircuitBreaker] = WeakSet()
+
+# Pools are observed the same way: weakly, so the gauges never keep a pool (and its backends) alive.
+_pools: WeakSet[PoolStatsSource] = WeakSet()
 
 _lock = RLock()
 _instruments: dict[str, Any] = {}
@@ -65,6 +82,37 @@ def _observe_circuit_breakers(_options: CallbackOptions) -> Iterator[Observation
             # type-check the installed library source.
             continue  # pragma: no cover - defensive
         yield Observation(value, {"system": breaker.system})
+
+
+def _pool_attributes(pool: PoolStatsSource) -> dict[str, str]:
+    return {"db.system.name": "postgresql", "db.client.connection.pool.name": pool.pool_name}
+
+
+def _observe_pool_connections(_options: CallbackOptions) -> Iterator[Observation]:
+    """Yield idle and in-use connection counts for every live pool."""
+    from opentelemetry.metrics import Observation  # noqa: PLC0415
+
+    for pool in list(_pools):
+        idle, in_use, _pending = pool.pool_stats()
+        yield Observation(idle, {**_pool_attributes(pool), "db.client.connection.state": "idle"})
+        yield Observation(in_use, {**_pool_attributes(pool), "db.client.connection.state": "used"})
+
+
+def _observe_pool_pending(_options: CallbackOptions) -> Iterator[Observation]:
+    """Yield the number of checkouts currently waiting, per live pool."""
+    from opentelemetry.metrics import Observation  # noqa: PLC0415
+
+    for pool in list(_pools):
+        _idle, _in_use, pending = pool.pool_stats()
+        yield Observation(pending, _pool_attributes(pool))
+
+
+def _observe_pool_max(_options: CallbackOptions) -> Iterator[Observation]:
+    """Yield the configured connection ceiling, per live pool."""
+    from opentelemetry.metrics import Observation  # noqa: PLC0415
+
+    for pool in list(_pools):
+        yield Observation(pool.max_connections, _pool_attributes(pool))
 
 
 def _build_instruments() -> dict[str, Any]:
@@ -94,6 +142,33 @@ def _build_instruments() -> dict[str, Any]:
             description="Reconnections performed by a resilient connection wrapper.",
         ),
     }
+    instruments[DB_CLIENT_CONNECTION_WAIT_TIME] = meter.create_histogram(
+        DB_CLIENT_CONNECTION_WAIT_TIME,
+        unit="s",
+        description="Time a caller waited for a pooled connection (queueing, creation and health probe), excluding the hold time.",
+    )
+    instruments[POOL_CONNECTIONS_CLOSED] = meter.create_counter(
+        POOL_CONNECTIONS_CLOSED,
+        description="Pooled connections closed by the pool itself, by reason (idle or lifetime).",
+    )
+    instruments[DB_CLIENT_CONNECTION_COUNT] = meter.create_observable_gauge(
+        DB_CLIENT_CONNECTION_COUNT,
+        callbacks=[_observe_pool_connections],
+        unit="{connection}",
+        description="Pooled connections, by state (idle or used).",
+    )
+    instruments[DB_CLIENT_CONNECTION_PENDING] = meter.create_observable_gauge(
+        DB_CLIENT_CONNECTION_PENDING,
+        callbacks=[_observe_pool_pending],
+        unit="{request}",
+        description="Checkouts currently waiting for a pooled connection.",
+    )
+    instruments[DB_CLIENT_CONNECTION_MAX] = meter.create_observable_gauge(
+        DB_CLIENT_CONNECTION_MAX,
+        callbacks=[_observe_pool_max],
+        unit="{connection}",
+        description="Configured maximum number of pooled connections.",
+    )
     instruments[PIPELINE_CIRCUIT_BREAKER_STATE] = meter.create_observable_gauge(
         PIPELINE_CIRCUIT_BREAKER_STATE,
         callbacks=[_observe_circuit_breakers],
@@ -131,6 +206,34 @@ def register_circuit_breaker(breaker: CircuitBreaker) -> None:
         _instrument(PIPELINE_CIRCUIT_BREAKER_STATE)
     except Exception:  # pragma: no cover - defensive
         logger.debug("Could not register a circuit breaker for telemetry", exc_info=True)
+
+
+def register_pool(pool: PoolStatsSource) -> None:
+    """Include a connection pool in the pool gauges for as long as it lives."""
+    try:
+        _pools.add(pool)
+        _instrument(DB_CLIENT_CONNECTION_COUNT)
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("Could not register a pool for telemetry", exc_info=True)
+
+
+def record_pool_wait(pool_name: str, duration_s: float, error_type: str | None = None) -> None:
+    """Record how long a checkout waited for a connection."""
+    attributes: dict[str, str] = {"db.system.name": "postgresql", "db.client.connection.pool.name": pool_name}
+    if error_type is not None:
+        attributes["error.type"] = error_type
+    try:
+        _instrument(DB_CLIENT_CONNECTION_WAIT_TIME).record(duration_s, attributes)
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("Could not record %s", DB_CLIENT_CONNECTION_WAIT_TIME, exc_info=True)
+
+
+def record_pool_connection_closed(pool_name: str, reason: str) -> None:
+    """Count one connection the pool closed on its own (reason: idle or lifetime)."""
+    try:
+        _instrument(POOL_CONNECTIONS_CLOSED).add(1, {"db.client.connection.pool.name": pool_name, "reason": reason})
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("Could not record %s", POOL_CONNECTIONS_CLOSED, exc_info=True)
 
 
 def record_db_operation(system: str, operation: str, duration_s: float, error_type: str | None = None) -> None:
