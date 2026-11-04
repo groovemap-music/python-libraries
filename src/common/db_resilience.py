@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import enum
 import inspect
 import logging
 import random
@@ -235,6 +236,19 @@ class ExponentialBackoff:
         return delay
 
 
+class _ProbeVerdict(enum.Enum):
+    HEALTHY = "healthy"
+    DEAD = "dead"
+    STALE = "stale"  # the handle was replaced, detached or closed while probing: the verdict is about nothing current
+
+
+def _reports_closed(connection: Any) -> bool:
+    """True when the connection object itself says it is closed (pika ``is_open``, psycopg/aio ``closed``)."""
+    return (
+        getattr(connection, "closed", None) is True or getattr(connection, "is_closed", None) is True or getattr(connection, "is_open", None) is False
+    )
+
+
 class ResilientConnection[T]:
     """Base class for resilient database connections with circuit breaker and retry logic."""
 
@@ -247,7 +261,7 @@ class ResilientConnection[T]:
         max_retries: int = 3,
         name: str = "Connection",
         system: str | None = None,
-        health_check_ttl: float = 30.0,
+        health_check_ttl: float = 0.0,
     ):
         self.connection_factory = connection_factory
         self.connection_test = connection_test
@@ -287,7 +301,12 @@ class ResilientConnection[T]:
             if self._connection:
                 # A passing probe is trusted for health_check_ttl: probing on every call put one
                 # round trip (and, on a saturated driver, a long wait under this lock) in front of each session.
-                if self._last_healthy_at and time.monotonic() - self._last_healthy_at < self.health_check_ttl:
+                if (
+                    self.health_check_ttl > 0
+                    and self._last_healthy_at
+                    and time.monotonic() - self._last_healthy_at < self.health_check_ttl
+                    and not _reports_closed(self._connection)
+                ):
                     return self._connection
                 if self._test_connection(self._connection):
                     self._last_healthy_at = time.monotonic()
@@ -296,7 +315,7 @@ class ResilientConnection[T]:
             if self._connection is not None:
                 self._close_connection(self._connection)
                 self._connection = None
-                self._last_healthy_at = 0.0
+            self._last_healthy_at = 0.0
 
             retry_count = 0
             last_error = None
@@ -332,12 +351,21 @@ class ResilientConnection[T]:
             logger.warning(f"⚠️ {self.name}: Connection test failed: {e}")
             return False
 
+    def _reset_health_state(self) -> None:
+        """Forget any healthy verdict. Every close()/clear path, including subclass overrides, must call this."""
+        self._last_healthy_at = 0.0
+
+    def note_borrower_error(self) -> None:
+        """A borrower hit a connection-level error: drop the healthy verdict so the next call probes."""
+        self._reset_health_state()
+
     def close(self) -> None:
         """Close the connection."""
         with self._lock:
             if self._connection is not None:
                 self._close_connection(self._connection)
                 self._connection = None
+            self._reset_health_state()
 
 
 def _consume_task_exception(task: asyncio.Task[Any]) -> None:
@@ -373,7 +401,7 @@ class AsyncResilientConnection[T]:
         self.system = system or name.lower()
         self.health_check_ttl = health_check_ttl
         self.probe_timeout = probe_timeout
-        self._probe_task: asyncio.Task[bool] | None = None
+        self._probe_task: asyncio.Task[_ProbeVerdict] | None = None
         self.unhealthy_threshold = unhealthy_threshold
         self.close_grace_period = close_grace_period
         self.reconnect_cooldown = reconnect_cooldown
@@ -416,47 +444,59 @@ class AsyncResilientConnection[T]:
             logger.warning(f"⚠️ {self.name}: Connection test failed: {e}")
             return False
 
-    def _recently_healthy(self) -> bool:
-        return bool(self._last_healthy_at) and time.monotonic() - self._last_healthy_at < self.health_check_ttl
+    def _recently_healthy(self, connection: T) -> bool:
+        return bool(self._last_healthy_at) and time.monotonic() - self._last_healthy_at < self.health_check_ttl and not _reports_closed(connection)
 
-    async def _probe_verdict(self, connection: T) -> bool:
-        """Probe an existing connection and return whether it may still be handed out.
+    def _probe_timeout_is_busy(self, connection: T) -> bool:  # noqa: ARG002
+        """Whether an unanswered probe is explained by the connection being saturated with work.
+
+        Default: no, an unanswered probe is an unresponsive peer. A wrapper that can tell a saturated driver
+        from a hung one (it knows how many borrowers are in flight) overrides this.
+        """
+        return False
+
+    async def _probe_verdict(self, connection: T) -> _ProbeVerdict:
+        """Probe an existing connection and decide whether it may still be handed out.
 
         Runs as a single shared task OUTSIDE the handle lock, so a slow probe never blocks other callers.
-        Three guards keep a merely BUSY connection from being torn down:
 
-        * a successful probe is trusted for ``health_check_ttl`` seconds, so
-          borrowing does not pay a health round trip per call — that round trip
-          is also what made the pool-starvation trigger reachable;
-        * a probe that has not answered within ``probe_timeout`` is a busy driver (a pool-acquisition
-          wait, which can last a minute), not a dead one: the connection is kept and nothing is recorded; and
-        * ``unhealthy_threshold`` CONSECUTIVE probe failures are required before
-          the connection is declared dead. One failure is not proof the server
-          is gone: replacing the connection would abort the in-flight work
-          of every other coroutine holding a session borrowed from it.
+        * a successful probe is trusted for ``health_check_ttl`` seconds, so borrowing does not pay a health
+          round trip per call;
+        * a probe unanswered within ``probe_timeout`` is benign ONLY when ``_probe_timeout_is_busy`` explains
+          it (every slot in use): that connection is working, and replacing it would abort the in-flight work
+          of every borrower. Otherwise it is an unresponsive peer and counts as a failed probe; and
+        * ``unhealthy_threshold`` CONSECUTIVE failed probes (timeouts included) are required before the
+          connection is declared dead, so a hung peer is replaced after roughly
+          ``unhealthy_threshold * probe_timeout`` seconds of callers probing it, never kept indefinitely.
         """
+        timed_out = False
         try:
             ok = await asyncio.wait_for(self._probe_connection(connection), timeout=self.probe_timeout)
         except TimeoutError:
-            logger.warning(f"⚠️ {self.name}: Health probe unanswered after {self.probe_timeout:.0f}s — connection is busy, keeping it")
-            return True
+            timed_out = True
+            ok = False
+            if self._probe_timeout_is_busy(connection):
+                logger.warning(f"⚠️ {self.name}: Health probe unanswered after {self.probe_timeout:.0f}s but the connection is saturated — keeping it")
+                return _ProbeVerdict.HEALTHY if self._connection is connection else _ProbeVerdict.STALE
         if self._connection is not connection:
-            return True  # replaced or detached while probing: this verdict is about a stale handle
+            return _ProbeVerdict.STALE
         if ok:
             self._failed_probes = 0
             self._last_healthy_at = time.monotonic()
-            return True
+            return _ProbeVerdict.HEALTHY
 
         self._failed_probes += 1
+        if timed_out:
+            logger.warning(f"⚠️ {self.name}: Health probe unanswered after {self.probe_timeout:.0f}s and the connection is not saturated")
         if self._failed_probes < self.unhealthy_threshold:
             logger.warning(
                 f"⚠️ {self.name}: Health check failed ({self._failed_probes}/{self.unhealthy_threshold}) — "
                 "keeping the existing connection; in-flight borrowers must not be aborted on one probe"
             )
-            return True
+            return _ProbeVerdict.HEALTHY
 
         logger.error(f"❌ {self.name}: Health check failed {self._failed_probes} consecutive times — replacing the connection")
-        return False
+        return _ProbeVerdict.DEAD
 
     def _schedule_deferred_close(self, connection: Any) -> None:
         """Close a replaced connection only after in-flight borrowers can drain.
@@ -474,11 +514,15 @@ class AsyncResilientConnection[T]:
         self._close_tasks.add(task)
         task.add_done_callback(self._close_tasks.discard)
 
+    def _reset_health_state(self) -> None:
+        """Forget any healthy verdict and failure count. Called by every close/detach path."""
+        self._failed_probes = 0
+        self._last_healthy_at = 0.0
+
     def _detach_connection(self, connection: T) -> None:
         """Stop handing out an unhealthy connection while existing borrowers drain."""
         self._connection = None
-        self._failed_probes = 0
-        self._last_healthy_at = 0.0
+        self._reset_health_state()
         self._schedule_deferred_close(connection)
 
     def _reconnect_failure_is_fresh(self) -> bool:
@@ -494,8 +538,25 @@ class AsyncResilientConnection[T]:
             with contextlib.suppress(ValueError):
                 self._draining.remove(connection)
 
+    async def _cancel_probe(self) -> None:
+        """Cancel the in-flight probe and wait for it to finish, so it cannot touch a connection being closed.
+
+        Shared by every close() path through ``_drain_deferred_closes``.
+        """
+        task, self._probe_task = self._probe_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+    def note_borrower_error(self) -> None:
+        """A borrower hit a connection-level error: drop the healthy verdict so the next checkout probes."""
+        self._reset_health_state()
+
     async def _drain_deferred_closes(self) -> None:
         """Close every detached connection immediately (explicit shutdown)."""
+        await self._cancel_probe()
+        self._reset_health_state()
         if self._reconnect_task is not None and not self._reconnect_task.done():
             self._reconnect_task.cancel()
         self._reconnect_task = None
@@ -527,9 +588,9 @@ class AsyncResilientConnection[T]:
 
         async with lock:
             connection = self._connection
-            probe: asyncio.Task[bool] | None = None
+            probe: asyncio.Task[_ProbeVerdict] | None = None
             if connection is not None:
-                if self._recently_healthy():
+                if self._recently_healthy(connection):
                     return connection
                 if self._probe_task is not None and not self._probe_task.done():
                     # A probe is already in flight (possibly a driver saturated by busy work). Do not queue
@@ -542,12 +603,20 @@ class AsyncResilientConnection[T]:
 
         if probe is not None and connection is not None:
             # Outside the lock: a slow probe delays only this caller, and only up to ``probe_timeout``.
-            if await asyncio.shield(probe):
-                return connection
+            try:
+                verdict = await asyncio.shield(probe)
+            except asyncio.CancelledError:
+                if not probe.cancelled():
+                    raise  # this caller was cancelled, not the probe
+                verdict = _ProbeVerdict.STALE  # close() cancelled the probe
+            # Re-read the handle under the lock: it may have been replaced, detached or closed while we waited,
+            # and the old object must never be handed out on the strength of a verdict about it.
             async with lock:
                 current = self._connection
                 if current is not None and current is not connection:
                     return current
+                if current is connection and verdict is _ProbeVerdict.HEALTHY and not _reports_closed(connection):
+                    return connection
                 if current is connection:
                     self._detach_connection(connection)
                 reconnect = self._start_reconnect_locked()
@@ -637,9 +706,6 @@ class AsyncResilientConnection[T]:
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:
-            if self._probe_task is not None and not self._probe_task.done():
-                self._probe_task.cancel()
-            self._probe_task = None
             await self._drain_deferred_closes()
             if self._connection is not None:
                 await self._aclose_connection(self._connection)

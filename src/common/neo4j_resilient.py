@@ -63,6 +63,8 @@ class ResilientNeo4jDriver(ResilientConnection[Any]):
             max_retries=max_retries,
             name="Neo4j",
             system="neo4j",
+            # A Neo4j probe opens a session and runs a query: worth trusting for a while.
+            health_check_ttl=30.0,
         )
 
         # Health check query
@@ -93,6 +95,10 @@ class ResilientNeo4jDriver(ResilientConnection[Any]):
             with tracing.db_span("neo4j", "session"):
                 driver = self.get_connection()
                 return driver.session(**kwargs)
+        except (ServiceUnavailable, SessionExpired) as exc:
+            self.note_borrower_error()
+            error_type = runtime_metrics.error_type_of(exc)
+            raise
         except Exception as exc:
             error_type = runtime_metrics.error_type_of(exc)
             raise
@@ -110,10 +116,13 @@ class ResilientNeo4jDriver(ResilientConnection[Any]):
                     logger.warning(f"⚠️ Error closing Neo4j driver: {e}")
                 finally:
                     self._connection = None
+            self._reset_health_state()
 
 
 class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
     """Async resilient Neo4j driver with automatic reconnection and circuit breaker."""
+
+    _open_sessions = 0  # class default so partially constructed instances still count safely
 
     def __init__(self, uri: str, auth: tuple[str, str], max_retries: int = 5, **driver_kwargs: Any):
         # Neo4j driver configuration
@@ -153,6 +162,12 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
 
         # Health check query
         self.health_check_query = "RETURN 1 as healthy"
+        # Sessions borrowed through session(): when they fill the Bolt pool, a probe that cannot get a
+        # connection is waiting its turn behind real work, not talking to a hung peer.
+        self._open_sessions = 0
+
+    def _probe_timeout_is_busy(self, connection: Any) -> bool:  # noqa: ARG002
+        return self._open_sessions >= int(self.driver_kwargs["max_connection_pool_size"])
 
     async def _create_driver(self) -> Any:
         """Create a new async Neo4j driver instance."""
@@ -179,8 +194,16 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
         try:
             with tracing.db_span("neo4j", "session"):
                 driver = await self.get_connection()
-                async with driver.session(**kwargs) as session:
-                    yield session
+                self._open_sessions += 1
+                try:
+                    async with driver.session(**kwargs) as session:
+                        yield session
+                finally:
+                    self._open_sessions -= 1
+        except (ServiceUnavailable, SessionExpired) as exc:
+            self.note_borrower_error()
+            error_type = runtime_metrics.error_type_of(exc)
+            raise
         except Exception as exc:
             error_type = runtime_metrics.error_type_of(exc)
             raise

@@ -48,17 +48,106 @@ class TestAsyncProbeOutsideLock:
         await manager.close()
 
     @pytest.mark.asyncio
-    async def test_probe_timeout_means_busy_so_connection_is_kept(self) -> None:
+    async def test_unanswered_probe_is_a_failure_and_a_hung_peer_is_replaced(self) -> None:
+        fresh = object()
+        existing = object()
+
+        async def hung(conn: object) -> bool:
+            if conn is existing:
+                await asyncio.sleep(60)
+            return True
+
+        manager: AsyncResilientConnection = AsyncResilientConnection(
+            lambda: fresh,
+            hung,
+            health_check_ttl=0.0,
+            probe_timeout=0.05,
+            unhealthy_threshold=3,
+            close_grace_period=0,
+            max_retries=1,
+        )
+        manager._connection = existing
+        manager._last_healthy_at = time.monotonic() - 1.0
+
+        started = time.perf_counter()
+        assert await manager.get_connection() is existing
+        assert await manager.get_connection() is existing
+        assert manager._failed_probes == 2
+        assert await manager.get_connection() is fresh  # third consecutive unanswered probe: replaced
+        assert time.perf_counter() - started < 2.0  # bounded: about threshold x probe_timeout
+        await manager.close()
+
+    @pytest.mark.asyncio
+    async def test_saturated_connection_is_kept_when_the_wrapper_explains_the_timeout(self) -> None:
         async def never_answers(_conn: object) -> bool:
             await asyncio.sleep(60)
             return True
 
-        manager = _manager(never_answers, probe_timeout=0.05)
+        class Saturated(AsyncResilientConnection):  # type: ignore[type-arg]
+            def _probe_timeout_is_busy(self, connection: object) -> bool:  # noqa: ARG002
+                return True
+
+        manager = Saturated(lambda: object(), never_answers, health_check_ttl=0.0, probe_timeout=0.05, unhealthy_threshold=2)
         existing = await _seed(manager)
-        started = time.perf_counter()
-        assert await manager.get_connection() is existing
-        assert time.perf_counter() - started < 1.0
-        assert manager._failed_probes == 0  # a busy driver is not a failed probe
+        for _ in range(6):  # far more rounds than the threshold
+            assert await manager.get_connection() is existing
+        assert manager._failed_probes == 0
+        await manager.close()
+
+    @pytest.mark.asyncio
+    async def test_handle_replaced_during_probe_is_never_returned(self) -> None:
+        gate = asyncio.Event()
+
+        async def probe(_conn: object) -> bool:
+            await gate.wait()
+            return True
+
+        manager = _manager(probe, probe_timeout=30.0)
+        old = await _seed(manager)
+        caller = asyncio.create_task(manager.get_connection())
+        await asyncio.sleep(0.05)
+        replacement = object()
+        manager._connection = replacement  # reconnect published a new handle while the probe was in flight
+        gate.set()
+        assert await caller is replacement
+        await manager.close()
+        assert old is not replacement
+
+    @pytest.mark.asyncio
+    async def test_close_during_probe_cancels_it_and_hands_out_no_old_handle(self) -> None:
+        async def probe(_conn: object) -> bool:
+            await asyncio.sleep(60)
+            return True
+
+        fresh = object()
+        manager: AsyncResilientConnection = AsyncResilientConnection(lambda: fresh, lambda _c: True, health_check_ttl=0.01, probe_timeout=30.0)
+        old = await _seed(manager)
+        manager.connection_test = probe  # type: ignore[assignment]
+        caller = asyncio.create_task(manager.get_connection())
+        await asyncio.sleep(0.05)
+        probe_task = manager._probe_task
+        assert probe_task is not None
+        manager.connection_test = lambda _c: True  # type: ignore[assignment]
+        await manager.close()
+        got = await asyncio.wait_for(caller, timeout=2.0)
+        assert got is not old
+        assert probe_task.done()
+        assert manager._probe_task is None
+        await asyncio.sleep(0)
+        assert not [t for t in asyncio.all_tasks() if "_probe_verdict" in repr(t)]
+
+    @pytest.mark.asyncio
+    async def test_closed_connection_is_never_reported_healthy_inside_the_ttl(self) -> None:
+        class Conn:
+            closed = False
+
+        fresh = Conn()
+        manager: AsyncResilientConnection = AsyncResilientConnection(lambda: fresh, lambda c: not c.closed, health_check_ttl=60.0)
+        old = Conn()
+        manager._connection = old
+        manager._last_healthy_at = time.monotonic()
+        old.closed = True
+        assert await manager.get_connection() is fresh
         await manager.close()
 
     @pytest.mark.asyncio
@@ -83,7 +172,133 @@ class TestAsyncProbeOutsideLock:
         await manager.close()
 
 
+class TestBorrowerErrorsAndCloseOrdering:
+    @pytest.mark.asyncio
+    async def test_borrower_connection_error_drops_the_healthy_verdict(self) -> None:
+        from neo4j.exceptions import ServiceUnavailable
+
+        driver = AsyncResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"))
+        raw = Mock()
+        raw.session = Mock(side_effect=ServiceUnavailable("gone"))
+        driver._connection = raw
+        driver._last_healthy_at = time.monotonic()
+        with pytest.raises(ServiceUnavailable):
+            async with driver.session():
+                pass
+        assert driver._last_healthy_at == 0.0
+        assert driver._open_sessions == 0
+
+    def test_sync_borrower_connection_error_drops_the_healthy_verdict(self) -> None:
+        from neo4j.exceptions import SessionExpired
+
+        from common.neo4j_resilient import ResilientNeo4jDriver
+
+        driver = ResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"))
+        raw = Mock()
+        raw.session = Mock(side_effect=SessionExpired("expired"))
+        driver._connection = raw
+        driver._last_healthy_at = time.monotonic()
+        with pytest.raises(SessionExpired):
+            driver.session()
+        assert driver._last_healthy_at == 0.0
+
+    @pytest.mark.asyncio
+    async def test_probe_is_awaited_to_completion_before_the_connection_is_closed(self) -> None:
+        events: list[str] = []
+
+        class Conn:
+            async def close(self) -> None:
+                events.append("closed")
+
+        old, fresh = Conn(), Conn()
+
+        async def probe(conn: object) -> bool:
+            if conn is fresh:
+                return True
+            try:
+                await asyncio.sleep(60)
+            finally:
+                events.append("probe-finished")
+            return True
+
+        manager: AsyncResilientConnection = AsyncResilientConnection(lambda: fresh, probe, health_check_ttl=0.01, probe_timeout=30.0)
+        manager._connection = old
+        manager._last_healthy_at = time.monotonic() - 1.0
+        caller = asyncio.create_task(manager.get_connection())
+        await asyncio.sleep(0.05)
+        await manager.close()
+        assert events == ["probe-finished", "closed"]  # probe finished before the old connection was closed
+        assert await asyncio.wait_for(caller, timeout=2.0) is fresh  # the waiter was not itself cancelled: it reconnects
+        await manager.close()
+
+    @pytest.mark.asyncio
+    async def test_cancelling_a_waiter_does_not_cancel_the_shared_probe(self) -> None:
+        gate = asyncio.Event()
+
+        async def probe(_conn: object) -> bool:
+            await gate.wait()
+            return True
+
+        manager = _manager(probe, probe_timeout=30.0)
+        existing = await _seed(manager)
+        waiter = asyncio.create_task(manager.get_connection())
+        await asyncio.sleep(0.05)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert manager._probe_task is not None
+        assert not manager._probe_task.cancelled()
+        gate.set()
+        assert await manager.get_connection() is existing
+        await manager.close()
+
+
 class TestSyncDriverProbeTtl:
+    def test_default_is_opt_in(self) -> None:
+        assert ResilientConnection(lambda: object(), lambda _c: True).health_check_ttl == 0
+
+    def test_rabbitmq_is_probed_on_every_call(self) -> None:
+        from common.rabbitmq_resilient import ResilientRabbitMQConnection
+
+        assert ResilientRabbitMQConnection("amqp://guest:guest@localhost:5672/").health_check_ttl == 0
+
+    def test_neo4j_opts_in(self) -> None:
+        from common.neo4j_resilient import ResilientNeo4jDriver
+
+        assert ResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x")).health_check_ttl > 0
+
+    def test_closed_connection_is_not_trusted_inside_the_ttl(self) -> None:
+        class Conn:
+            is_open = True
+
+            def close(self) -> None:
+                self.is_open = False
+
+        conns = [Conn(), Conn()]
+        manager: ResilientConnection = ResilientConnection(lambda: conns.pop(0), lambda c: c.is_open, health_check_ttl=60.0)
+        first = manager.get_connection()
+        first.close()  # peer/driver closed it inside the TTL
+        assert manager.get_connection() is not first
+
+    def test_close_overrides_reset_the_healthy_verdict(self) -> None:
+        from unittest.mock import patch as _patch
+
+        from common.neo4j_resilient import ResilientNeo4jDriver
+        from common.rabbitmq_resilient import ResilientRabbitMQConnection
+
+        with _patch("common.rabbitmq_resilient.BlockingConnection"):
+            rabbit = ResilientRabbitMQConnection("amqp://guest:guest@localhost:5672/")
+            rabbit._connection = Mock(is_open=False)
+            rabbit._last_healthy_at = time.monotonic()
+            rabbit.close()
+            assert rabbit._last_healthy_at == 0.0
+            assert rabbit._connection is None  # even an already-closed handle is cleared
+        neo = ResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"))
+        neo._connection = Mock()
+        neo._last_healthy_at = time.monotonic()
+        neo.close()
+        assert neo._last_healthy_at == 0.0
+
     def test_probe_runs_once_inside_ttl(self) -> None:
         probe = Mock(return_value=True)
         manager: ResilientConnection = ResilientConnection(lambda: object(), probe, health_check_ttl=30.0)
@@ -101,36 +316,82 @@ class TestSyncDriverProbeTtl:
 
 
 _URI = os.environ.get("NEO4J_URI", "")
+_CONTAINER = os.environ.get("NEO4J_CONTAINER", "")
 
 
-@pytest.mark.integration
-@pytest.mark.skipif(not _URI, reason="NEO4J_URI not set")
-@pytest.mark.asyncio
-async def test_saturated_live_neo4j_does_not_stall_callers() -> None:
+def _live_driver(**kwargs: object) -> AsyncResilientNeo4jDriver:
     driver = AsyncResilientNeo4jDriver(
         _URI,
         (os.environ.get("NEO4J_USER", "neo4j"), os.environ.get("NEO4J_PASSWORD", "")),
         max_connection_pool_size=2,
         connection_acquisition_timeout=8.0,
+        **kwargs,
     )
     driver.health_check_ttl = 0.2
     driver.probe_timeout = 1.0
+    return driver
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _URI, reason="NEO4J_URI not set")
+@pytest.mark.asyncio
+async def test_saturated_live_neo4j_is_kept_and_does_not_stall_callers() -> None:
+    driver = _live_driver()
     raw = await driver.get_connection()
-    held = []
-    for _ in range(2):
-        session = raw.session(database="neo4j")
-        await session.run("RETURN 1")
-        held.append(session)
-    await asyncio.sleep(0.4)
+    release = asyncio.Event()
+
+    async def hold() -> None:
+        async with driver.session(database="neo4j") as session:
+            await session.run("RETURN 1")
+            await release.wait()
+
+    holders = [asyncio.create_task(hold()) for _ in range(2)]  # fills the 2-connection Bolt pool
+    await asyncio.sleep(0.5)
 
     async def timed() -> float:
         started = time.perf_counter()
-        await driver.get_connection()
+        assert await driver.get_connection() is raw
         return time.perf_counter() - started
 
-    waits = await asyncio.gather(*[timed() for _ in range(20)])
-    assert max(waits) < 4.0  # was one 8 s acquisition wait per queued caller
-    assert driver._connection is raw  # a saturated driver was kept, not torn down
-    for session in held:
-        await session.close()
+    for _ in range(driver.unhealthy_threshold + 2):  # more probe rounds than would tear a hung peer down
+        await asyncio.sleep(0.3)
+        assert max(await asyncio.gather(*[timed() for _ in range(10)])) < 4.0
+    assert driver._connection is raw  # saturated, not torn down
+    release.set()
+    await asyncio.gather(*holders)
+    await driver.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not (_URI and _CONTAINER), reason="NEO4J_URI and NEO4J_CONTAINER not set")
+@pytest.mark.asyncio
+async def test_hung_live_neo4j_is_replaced_within_a_bound() -> None:
+    import subprocess
+
+    driver = _live_driver()
+    driver._reconnect_failure_is_fresh = lambda: False  # type: ignore[method-assign]
+    driver.max_retries = 1
+    raw = await driver.get_connection()
+    subprocess.run(["docker", "pause", _CONTAINER], check=True, capture_output=True)  # noqa: S603, S607
+    try:
+        await asyncio.sleep(0.3)
+        started = time.perf_counter()
+        outcomes = []
+        for _ in range(driver.unhealthy_threshold + 1):
+            try:
+                outcomes.append(await driver.get_connection() is raw)
+            except Exception:  # the replacement cannot connect to a frozen server either
+                outcomes.append("raised")
+                break
+            await asyncio.sleep(0.25)
+        elapsed = time.perf_counter() - started
+        assert "raised" in outcomes or outcomes[-1] is False  # the hung handle stopped being handed out
+        assert driver._connection is not raw
+        assert elapsed < driver.unhealthy_threshold * (driver.probe_timeout + 1.0) + 8.0
+    finally:
+        subprocess.run(["docker", "unpause", _CONTAINER], check=True, capture_output=True)  # noqa: S603, S607
+    await asyncio.sleep(1.0)
+    driver._last_failure_at = None
+    healthy = await driver.get_connection()
+    assert healthy is not raw  # recovered onto a fresh driver once the peer answers again
     await driver.close()
