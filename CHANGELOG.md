@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Add `common.person_names.strip_person_name`: the one rule for padding on a Person name, used
+  by both `discogs-graph-enricher` (`person_credit_rows`) and `discogs-sql-loader` (`_credits`) so
+  Neo4j `Person.name` and Postgres `graph.person.name` key a person identically. It strips Unicode
+  whitespace, control and format characters (for example U+200C, U+200F, U+FEFF) from the two ends
+  only; interior characters are unchanged and an all-padding name returns `""`, which callers
+  treat as no usable name. Both services must adopt it in the same release: stripping in one
+  store alone splits the keys.
+
 - Add Valkey namespacing and database selection. `VALKEY_DB` (integer `0..255`, blank is 0)
   is now honored by the new public `common.config.get_valkey_url()` and by
   `_build_valkey_url()`, which remains as a compatible alias; with `VALKEY_DB` unset the URL is
