@@ -32,6 +32,8 @@ if TYPE_CHECKING:
         FailureKind,
         Settlement,
         WriteAdmission,
+        broker_handouts,
+        requeue_or_dead_letter,
         run_delivery,
     )
     from common.errors import describe_exception
@@ -129,6 +131,9 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "FailureKind": ("common.delivery", "FailureKind"),
     "Settlement": ("common.delivery", "Settlement"),
     "WriteAdmission": ("common.delivery", "WriteAdmission"),
+    "DEFAULT_MAX_REQUEUES": ("common.delivery", "DEFAULT_MAX_REQUEUES"),
+    "broker_handouts": ("common.delivery", "broker_handouts"),
+    "requeue_or_dead_letter": ("common.delivery", "requeue_or_dead_letter"),
     "run_delivery": ("common.delivery", "run_delivery"),
     "Event": ("common.events", "Event"),
     "EventValidationError": ("common.events", "EventValidationError"),

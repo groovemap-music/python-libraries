@@ -8,17 +8,29 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+import structlog
+
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
     from contextlib import AbstractContextManager
     from types import TracebackType
+
+logger = structlog.get_logger(__name__)
+
+# How many times a failing delivery may be requeued before it is dead-lettered instead. The broker
+# will not do this: on RabbitMQ 4.3.5 and 4.4.0 ``x-delivery-limit`` counts channel and connection
+# closes and ``basic.reject``, never ``basic.nack(requeue=True)``. See docs/runtime.md. Paced by
+# OutageBackoff's 60 s cap this is about 8.3 hours, so a database outage does not dead-letter
+# records that are fine, and a message failing on a healthy backend ends much sooner.
+DEFAULT_MAX_REQUEUES = 500
 
 
 class WriteAdmission:
@@ -169,6 +181,39 @@ class _IsolatedObservation:
         return False
 
 
+def broker_handouts(delivery: object) -> int:
+    """Return how many times the broker has handed this message out before this delivery.
+
+    ``x-acquired-count`` rises on every return of any kind, while ``x-delivery-count`` misses nacks,
+    so a redelivery's real count is the larger. A first delivery carries neither header, and a
+    delivery that exposes no ``headers`` counts as zero.
+    """
+    headers = getattr(delivery, "headers", None)
+    if not isinstance(headers, Mapping):
+        return 0
+    counts = (headers.get(name) for name in ("x-acquired-count", "x-delivery-count"))
+    return max((count for count in counts if isinstance(count, int)), default=0)
+
+
+def requeues_spent(delivery: object, max_requeues: int | None) -> bool:
+    """Return whether ``delivery`` has used its budget. ``None`` means no bound."""
+    return max_requeues is not None and broker_handouts(delivery) >= max_requeues
+
+
+async def requeue_or_dead_letter(delivery: Delivery, *, max_requeues: int | None = DEFAULT_MAX_REQUEUES) -> bool:
+    """Requeue ``delivery``, or dead-letter it once its budget is spent. ``True`` if requeued.
+
+    For the ``nack(requeue=True)`` sites outside :func:`run_delivery`, because the broker does not
+    bound them. Wait before calling this, or the message comes straight back.
+    """
+    if requeues_spent(delivery, max_requeues):
+        logger.error("☠️ Redelivery budget spent, dead-lettering", handouts=broker_handouts(delivery), max_requeues=max_requeues)
+        await delivery.nack(requeue=False)
+        return False
+    await delivery.nack(requeue=True)
+    return True
+
+
 async def _settle(delivery: Delivery, settlement: Settlement) -> None:
     if settlement is Settlement.ACK:
         await delivery.ack()
@@ -189,8 +234,13 @@ async def run_delivery(
     entity: str,
     headers: object | None = None,
     wait_before_requeue: Callable[[], Awaitable[None]] | None = None,
+    max_requeues: int | None = DEFAULT_MAX_REQUEUES,
 ) -> DeliveryResult:
-    """Run one handler attempt and apply at most one terminal settlement."""
+    """Run one handler attempt and apply at most one terminal settlement.
+
+    A requeue past ``max_requeues`` is dead-lettered instead and reported with the outcome
+    ``redelivery_exhausted``. ``None`` removes the bound, and nothing else provides one.
+    """
     started = perf_counter()
     with _IsolatedObservation(observer, destination, headers) as span:
         try:
@@ -200,11 +250,21 @@ async def run_delivery(
         except Exception as error:
             kind = classifier(error)
             if kind is FailureKind.TRANSIENT:
-                if wait_before_requeue is not None:
+                if wait_before_requeue is not None and not requeues_spent(delivery, max_requeues):
                     await wait_before_requeue()
                 result = DeliveryResult(Settlement.REQUEUE, kind.value, type(error).__name__)
             else:
                 result = DeliveryResult(Settlement.REJECT, kind.value, type(error).__name__)
+
+        if result.settlement is Settlement.REQUEUE and requeues_spent(delivery, max_requeues):
+            logger.error(
+                "☠️ Redelivery budget spent, dead-lettering",
+                destination=destination,
+                handouts=broker_handouts(delivery),
+                max_requeues=max_requeues,
+                error_type=result.error_type,
+            )
+            result = DeliveryResult(Settlement.REJECT, "redelivery_exhausted", result.error_type)
 
         await _settle(delivery, result.settlement)
         with contextlib.suppress(Exception):

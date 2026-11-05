@@ -11,7 +11,7 @@ from functools import partial
 from time import monotonic, perf_counter
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
-from common.delivery import Delivery, DeliveryObserver, DeliveryResult, FailureClassifier, FailureKind, Settlement
+from common.delivery import Delivery, DeliveryObserver, DeliveryResult, FailureClassifier, FailureKind, Settlement, requeue_or_dead_letter
 
 
 if TYPE_CHECKING:
@@ -55,6 +55,11 @@ class BatchPolicy:
     # delivery is returned with nack(requeue=True) instead of being held until the broker closes
     # the channel. None keeps the historical unbounded hold.
     max_hold_s: float | None = None
+    # How many times a held delivery may go back to the broker before it is dead-lettered instead,
+    # which nothing else does: RabbitMQ does not spend x-delivery-limit on nack(requeue=True). The
+    # outage survived is this times max_hold_s. Needs a delivery that exposes the broker's
+    # ``headers``; without them it is never reached. None removes the bound.
+    max_requeues: int | None = 20
 
     def __post_init__(self) -> None:
         positive = (
@@ -280,8 +285,9 @@ class AsyncBatchEngine[KeyT, PayloadT]:
         """Return deliveries held past ``max_hold_s`` during transient backoff to the broker.
 
         ``nack(requeue=True)`` loses nothing: the broker redelivers the message and the consumer
-        submits it again. Only the longest-held prefix is released, so surviving items keep their
-        order. A failed nack means the channel is gone, and the broker redelivers those too.
+        submits it again, until ``max_requeues`` sends it to the dead-letter queue. Only the
+        longest-held prefix is released, so surviving items keep their order. A failed nack means
+        the channel is gone, and the broker redelivers those too.
         """
         limit = self._policy.max_hold_s
         if limit is None or self._transient_attempts[key] == 0:
@@ -293,7 +299,7 @@ class AsyncBatchEngine[KeyT, PayloadT]:
             while queue and now - queue[0].received_at >= limit:
                 item = queue.popleft()
                 try:
-                    await item.delivery.nack(requeue=True)
+                    requeued = await requeue_or_dead_letter(item.delivery, max_requeues=self._policy.max_requeues)
                 except Exception as error:
                     self._capacity.release()
                     lost.append((item, error))
@@ -305,7 +311,9 @@ class AsyncBatchEngine[KeyT, PayloadT]:
                 with contextlib.suppress(Exception):
                     self._observer.settled(
                         entity=str(key),
-                        result=DeliveryResult(Settlement.REQUEUE, "held_timeout"),
+                        result=DeliveryResult(Settlement.REQUEUE, "held_timeout")
+                        if requeued
+                        else DeliveryResult(Settlement.REJECT, "redelivery_exhausted"),
                         duration_s=now - item.received_at,
                         span=None,
                     )

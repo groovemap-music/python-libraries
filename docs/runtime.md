@@ -13,7 +13,7 @@ from an implementation module, when a name appears here.
 | --- | --- |
 | Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging`, `valkey_key`, `valkey_pattern` |
 | Data and diagnostics | `normalize_record`, `describe_exception` |
-| Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `WriteAdmission`, `run_delivery` |
+| Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `WriteAdmission`, `run_delivery`, `DEFAULT_MAX_REQUEUES`, `broker_handouts`, `requeue_or_dead_letter` |
 | Discogs batch lifecycle | `BatchItemResult`, `BatchPolicy`, `BatchSink`, `BatchObserver`, `AsyncBatchEngine` |
 | First-party events | `Event`, `Impression`, `EventValidationError`, `event_types`, `surfaces`, `consent_purposes`, `payload_schema_for`, `is_valid_event_type`, `validate_event`, `validate_impression`, `new_event`, `new_impression` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
@@ -108,6 +108,44 @@ Set `BatchPolicy.max_hold_s` below that timeout: a delivery held longer than the
 key is in transient backoff is returned with `nack(requeue=True)` (never acked, never lost) and
 reported to `BatchObserver.settled` as `requeue` / `held_timeout`. The default `None` keeps the
 unbounded hold, so existing consumers are unchanged until they opt in.
+
+### What ends a message that keeps failing
+
+`x-delivery-limit` is not enough on its own. Measured on quorum queues with limit 20 on RabbitMQ
+4.3.5 and 4.4.0, and pinned by `tests/test_redelivery_integration.py`:
+
+| How the message came back | `x-delivery-count` | `x-acquired-count` | Dead-lettered by the broker |
+| --- | --- | --- | --- |
+| `basic.nack(requeue=True)`, also after `basic.cancel` or from `basic.get` | never set | +1 | **Never**: 1,500 deliveries, none |
+| `basic.reject(requeue=True)` | +1 | +1 | After the 21st delivery |
+| Consumer timeout (`consumer_timeout` or `x-consumer-timeout`) | never set | +1 | **Never**: the broker cancels the consumer and requeues, and the channel stays open |
+| Channel closed, connection closed or force-closed, consumer process killed | +1 | +1 | After the 21st delivery |
+| Consumer cancelled, then connection closed (service shutdown) | +1 | +1 | After the 21st delivery |
+| Broker app restarted with the delivery unsettled | +1 | +1 | Counted the same; 5 cycles measured |
+
+The two counts are separate: after 9 nacks and 20 closes a message showed count 20 and acquired 29,
+and dead-lettered with reason `delivery_limit`. A nacked message goes back to the head of the queue,
+ahead of messages behind it. Because a service shutdown spends the budget and a nack does not,
+leaving a delivery unsettled at shutdown is about avoiding a hot loop, not about saving budget.
+
+So the runtime bounds a nacked message itself, from `x-acquired-count`, which needs no state of its
+own and survives a consumer restart. The bound counts deliveries; the time depends on the pace:
+
+| Path | Bound | Failure survived | Persistent failure ends |
+| --- | --- | --- | --- |
+| `run_delivery` with `OutageBackoff` | `DEFAULT_MAX_REQUEUES`, 500 | About 8.3 hours at the 60 s cap | Within 500 × (60 s + one attempt) |
+| `run_delivery` with no wait | 500 | Seconds: pass a wait | 501 deliveries, seconds |
+| `AsyncBatchEngine` held deliveries | `BatchPolicy.max_requeues`, 20 | `max_requeues` × `max_hold_s` | 21 holds; about 8.3 hours at 1500 s |
+| Any other `nack(requeue=True)` site | `requeue_or_dead_letter` | Set by the caller's wait | Set by the caller's wait |
+
+A message failing on a healthy backend reaches its bound far sooner, because `OutageBackoff` resets
+on each success. Past the bound the delivery is nacked without requeue, logged at error level, and
+reported with the outcome `redelivery_exhausted`, so it lands in the DLQ with reason `rejected`. A
+queue with no dead-letter exchange drops it instead.
+
+The engine reads the headers from the delivery it was given, so a callback adapter must expose the
+broker's `headers`; without them `max_requeues` is never reached. A bare `nack(requeue=True)` is not
+bounded by anything: use `requeue_or_dead_letter`.
 
 `PostgreSQLFailureClassifier` is the shared `FailureClassifier` for PostgreSQL. Connection-class
 SQLSTATEs (08, 40, 53, 55, 57, 58, F0) and an `OperationalError` or `InterfaceError` with no

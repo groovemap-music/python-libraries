@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import nullcontext
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from common.delivery import DeliveryResult, FailureKind, Settlement, run_delivery
+from common.delivery import DeliveryResult, FailureKind, Settlement, broker_handouts, requeue_or_dead_letter, run_delivery
 
 
 class Observer:
@@ -230,3 +230,97 @@ async def test_admission_cancellation_preserves_delivery_ownership(cancel_waitin
     observer.settled.assert_not_called()
     delivery.ack.assert_not_awaited()
     delivery.nack.assert_not_awaited()
+
+
+def _message(headers: object) -> AsyncMock:
+    message = AsyncMock()
+    message.headers = headers
+    return message
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        (None, 0),
+        ({}, 0),
+        ({"x-acquired-count": 7}, 7),
+        ({"x-delivery-count": 3}, 3),
+        ({"x-acquired-count": 29, "x-delivery-count": 20}, 29),
+        ({"x-acquired-count": "9"}, 0),
+    ],
+)
+def test_broker_handouts_reads_the_larger_count(headers: object, expected: int) -> None:
+    assert broker_handouts(_message(headers)) == expected
+
+
+def test_a_delivery_without_headers_counts_as_a_first_delivery() -> None:
+    assert broker_handouts(object()) == 0
+
+
+@pytest.mark.asyncio
+async def test_requeue_within_budget_nacks_with_requeue() -> None:
+    message = _message({"x-acquired-count": 2})
+    assert await requeue_or_dead_letter(message, max_requeues=3) is True
+    message.nack.assert_awaited_once_with(requeue=True)
+
+
+@pytest.mark.asyncio
+async def test_requeue_past_budget_dead_letters() -> None:
+    message = _message({"x-acquired-count": 3})
+    assert await requeue_or_dead_letter(message, max_requeues=3) is False
+    message.nack.assert_awaited_once_with(requeue=False)
+
+
+@pytest.mark.asyncio
+async def test_no_budget_always_requeues() -> None:
+    message = _message({"x-acquired-count": 10_000})
+    assert await requeue_or_dead_letter(message, max_requeues=None) is True
+    message.nack.assert_awaited_once_with(requeue=True)
+
+
+@pytest.mark.asyncio
+async def test_run_delivery_dead_letters_a_spent_transient_failure_without_waiting() -> None:
+    message = _message({"x-acquired-count": 5})
+    wait = AsyncMock()
+    observer = MagicMock()
+    observer.consume.return_value = nullcontext()
+
+    async def operation() -> DeliveryResult:
+        raise ConnectionError("down")
+
+    result = await run_delivery(
+        message,
+        operation,
+        classifier=lambda _error: FailureKind.TRANSIENT,
+        observer=observer,
+        destination="q",
+        entity="e",
+        wait_before_requeue=wait,
+        max_requeues=5,
+    )
+
+    assert result == DeliveryResult(Settlement.REJECT, "redelivery_exhausted", "ConnectionError")
+    wait.assert_not_awaited()
+    message.nack.assert_awaited_once_with(requeue=False)
+
+
+@pytest.mark.asyncio
+async def test_run_delivery_bounds_a_requeue_the_handler_returned() -> None:
+    message = _message({"x-acquired-count": 5})
+    observer = MagicMock()
+    observer.consume.return_value = nullcontext()
+
+    async def operation() -> DeliveryResult:
+        return DeliveryResult(Settlement.REQUEUE, "failed", "Reconciliation")
+
+    result = await run_delivery(
+        message,
+        operation,
+        classifier=lambda _error: FailureKind.TRANSIENT,
+        observer=observer,
+        destination="q",
+        entity="e",
+        max_requeues=5,
+    )
+
+    assert result == DeliveryResult(Settlement.REJECT, "redelivery_exhausted", "Reconciliation")
