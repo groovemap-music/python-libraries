@@ -1,9 +1,3 @@
-    # How many times a held delivery may go back to the broker before it is dead-lettered instead,
-    # which nothing else does: RabbitMQ does not spend x-delivery-limit on nack(requeue=True). The
-    # outage survived is this times max_hold_s, so set the two together. It needs a delivery that
-    # exposes the broker's ``headers``. None keeps requeueing without a bound.
-    max_requeues: int | None = None
-
 """Dependency-light asynchronous batching for Discogs consumers."""
 
 from __future__ import annotations
@@ -63,9 +57,9 @@ class BatchPolicy:
     max_hold_s: float | None = None
     # How many times a held delivery may go back to the broker before it is dead-lettered instead,
     # which nothing else does: RabbitMQ does not spend x-delivery-limit on nack(requeue=True). The
-    # outage survived is this times max_hold_s. Needs a delivery that exposes the broker's
-    # ``headers``; without them it is never reached. None removes the bound.
-    max_requeues: int | None = 20
+    # outage survived is this times max_hold_s, so set the two together. It needs a delivery that
+    # exposes the broker's ``headers``. None keeps requeueing without a bound.
+    max_requeues: int | None = None
 
     def __post_init__(self) -> None:
         if self.max_requeues is not None and self.max_requeues < 1:
