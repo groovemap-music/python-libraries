@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections import deque
 from dataclasses import dataclass
 from functools import partial
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from types import TracebackType
 
+
+logger = logging.getLogger(__name__)
 
 PayloadT = TypeVar("PayloadT")
 KeyT = TypeVar("KeyT")
@@ -84,12 +87,26 @@ class BatchObserver(DeliveryObserver, Protocol[KeyT_contra]):
     def retry(self, *, key: KeyT_contra, kind: FailureKind, attempt: int, delay_s: float, span: Any) -> None: ...
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class _Pending[PayloadT]:
     payload: PayloadT
     delivery: Delivery
     span_context: object | None
     received_at: float = 0.0
+
+
+@dataclass(eq=False)
+class _Drain:
+    """A drain of one key and the number of callers still waiting for its outcome."""
+
+    task: asyncio.Task[bool]
+    waiters: int = 0
+
+
+def _retrieve_outcome(task: asyncio.Task[bool]) -> None:
+    """Mark a drain's exception as seen; every caller that wanted it has it from ``result()``."""
+    if not task.cancelled():
+        task.exception()
 
 
 class _IsolatedContext:
@@ -143,6 +160,11 @@ class AsyncBatchEngine[KeyT, PayloadT]:
         self._transient_attempts = dict.fromkeys(keys, 0)
         self._poison_attempts = dict.fromkeys(keys, 0)
         self._retry_at = dict.fromkeys(keys, 0.0)
+        self._arriving = dict.fromkeys(keys, 0)
+        self._arrivals = {key: asyncio.Event() for key in keys}
+        self._next_drain: dict[KeyT, _Drain | None] = dict.fromkeys(keys)
+        self._periodic_failures = dict.fromkeys(keys, 0)
+        self._lost_deliveries = dict.fromkeys(keys, 0)
         self._shutdown = asyncio.Event()
 
     async def submit(
@@ -155,12 +177,32 @@ class AsyncBatchEngine[KeyT, PayloadT]:
     ) -> None:
         if key not in self._queues:
             raise KeyError(key)
-        await self._capacity.acquire()
+        self._arriving[key] += 1
         try:
-            self._queues[key].append(_Pending(payload, delivery, span_context, monotonic()))
-        except BaseException:
-            self._capacity.release()
-            raise
+            await self._capacity.acquire()
+            try:
+                self._queues[key].append(_Pending(payload, delivery, span_context, monotonic()))
+            except BaseException:
+                self._capacity.release()
+                raise
+        finally:
+            self._arriving[key] -= 1
+            self._arrivals[key].set()
+
+    def _pending(self, key: KeyT) -> int:
+        """Work the engine owes this key: queued, or inside :meth:`submit` waiting for capacity."""
+        return len(self._queues[key]) + self._arriving[key]
+
+    async def _next_arrival(self, key: KeyT) -> bool:
+        """Wait for a :meth:`submit` to finish; ``False`` if none did within a tick."""
+        arrival = self._arrivals[key]
+        arrival.clear()
+        try:
+            async with asyncio.timeout(self._policy.flush_interval_s):
+                await arrival.wait()
+        except TimeoutError:
+            return False
+        return True
 
     def _pop(self, key: KeyT) -> list[_Pending[PayloadT]]:
         queue = self._queues[key]
@@ -185,13 +227,48 @@ class AsyncBatchEngine[KeyT, PayloadT]:
         with contextlib.suppress(Exception):
             self._observer.settled(entity=str(key), result=delivery_result, duration_s=perf_counter() - started, span=span)
 
-    async def _settle(self, key: KeyT, items: Sequence[_Pending[PayloadT]], results: Sequence[BatchItemResult], started: float, span: Any) -> None:
+    def _report_lost(self, key: KeyT, lost: Sequence[tuple[_Pending[PayloadT], Exception]]) -> None:
+        """Account for deliveries whose settlement failed; see :meth:`_settle`."""
+        if not lost:
+            return
+        self._lost_deliveries[key] += len(lost)
+        error_type = type(lost[-1][1]).__name__
+        logger.warning(f"⚠️ {len(lost)} {key} deliveries could not be settled ({error_type}); the broker holds them and will redeliver")
+        now = monotonic()
+        for item, error in lost:
+            with contextlib.suppress(Exception):
+                self._observer.settled(
+                    entity=str(key),
+                    result=DeliveryResult(Settlement.REQUEUE, "delivery_lost", type(error).__name__),
+                    duration_s=now - item.received_at,
+                    span=None,
+                )
+
+    async def _settle(
+        self,
+        key: KeyT,
+        items: Sequence[_Pending[PayloadT]],
+        results: Sequence[BatchItemResult],
+        started: float,
+        span: Any,
+        lost: list[tuple[_Pending[PayloadT], Exception]],
+    ) -> None:
+        """Apply each result, leaving a delivery that cannot be settled to the broker.
+
+        Delivery tags die with their channel, so a failed ack or nack can never succeed later, and
+        retaining the item would rewrite it and fail again forever while it holds capacity. The
+        broker still owns an unsettled message and redelivers it once the channel is gone, so
+        dropping the local copy loses nothing. The rest of the batch is still settled.
+        """
         for index, (item, result) in enumerate(zip(items, results, strict=True)):
             try:
                 if result.settlement is Settlement.ACK:
                     await item.delivery.ack()
                 else:
                     await item.delivery.nack(requeue=False)
+            except Exception as error:
+                self._capacity.release()
+                lost.append((item, error))
             except BaseException:
                 self._restore(key, items[index:])
                 raise
@@ -204,122 +281,185 @@ class AsyncBatchEngine[KeyT, PayloadT]:
 
         ``nack(requeue=True)`` loses nothing: the broker redelivers the message and the consumer
         submits it again. Only the longest-held prefix is released, so surviving items keep their
-        order. A settlement failure leaves the unreleased tail queued, as in :meth:`_settle`.
+        order. A failed nack means the channel is gone, and the broker redelivers those too.
         """
         limit = self._policy.max_hold_s
         if limit is None or self._transient_attempts[key] == 0:
             return
         queue = self._queues[key]
         now = monotonic()
-        while queue and now - queue[0].received_at >= limit:
-            item = queue.popleft()
-            try:
-                await item.delivery.nack(requeue=True)
-            except BaseException:
-                queue.appendleft(item)
-                raise
-            self._capacity.release()
-            with contextlib.suppress(Exception):
-                self._observer.settled(
-                    entity=str(key),
-                    result=DeliveryResult(Settlement.REQUEUE, "held_timeout"),
-                    duration_s=now - item.received_at,
-                    span=None,
-                )
+        lost: list[tuple[_Pending[PayloadT], Exception]] = []
+        try:
+            while queue and now - queue[0].received_at >= limit:
+                item = queue.popleft()
+                try:
+                    await item.delivery.nack(requeue=True)
+                except Exception as error:
+                    self._capacity.release()
+                    lost.append((item, error))
+                    continue
+                except BaseException:
+                    queue.appendleft(item)
+                    raise
+                self._capacity.release()
+                with contextlib.suppress(Exception):
+                    self._observer.settled(
+                        entity=str(key),
+                        result=DeliveryResult(Settlement.REQUEUE, "held_timeout"),
+                        duration_s=now - item.received_at,
+                        span=None,
+                    )
+        finally:
+            self._report_lost(key, lost)
 
     async def flush(self, key: KeyT) -> bool:
+        """Settle ``key``'s work; ``True`` only if nothing at all is pending when it ends.
+
+        Callers gate destructive steps on ``True``, so a handler still inside :meth:`submit`
+        counts as pending: the drain waits for it, for up to a tick at a time. Each drain is
+        bounded by the work present when it starts, so a key under constant backlog still returns,
+        with ``False``. Callers do not line up behind a running drain: they share the single drain
+        that starts after it, which covers everything they queued, so the number of waiting tasks
+        stays bounded however fast deliveries arrive. That drain is cancelled only when its last
+        waiter is, leaving its work queued; one cancelled handler stops no one else's write.
+        """
         if key not in self._queues:
             raise KeyError(key)
+        drain = self._next_drain[key]
+        if drain is None or drain.task.done():
+            drain = _Drain(asyncio.create_task(self._drain(key)))
+            drain.task.add_done_callback(_retrieve_outcome)
+            self._next_drain[key] = drain
+        drain.waiters += 1
+        try:
+            await asyncio.wait({drain.task})
+        except asyncio.CancelledError:
+            drain.waiters -= 1
+            if drain.waiters == 0 and not drain.task.done():
+                if self._next_drain[key] is drain:
+                    self._next_drain[key] = None
+                drain.task.cancel()
+                await asyncio.wait({drain.task})
+            raise
+        drain.waiters -= 1
+        return drain.task.result()
+
+    async def _drain(self, key: KeyT) -> bool:
         async with self._locks[key]:
-            await self._release_expired(key)
-            no_progress = 0
-            while self._queues[key]:
-                if monotonic() < self._retry_at[key]:
-                    return False
-                items = self._pop(key)
-                acquired = False
-                started = perf_counter()
-                links = [item.span_context for item in items if item.span_context is not None][:64]
-                try:
-                    await self._flush_capacity.acquire()
-                    acquired = True
-                    observation = partial(self._observer.flush, key, len(items), links)
-                    with _IsolatedContext(observation) as span:
-                        try:
-                            results = list(await self._sink.write(key, [item.payload for item in items]))
-                        except asyncio.CancelledError:
-                            self._restore(key, items)
-                            raise
-                        except Exception as error:
-                            kind = self._classifier(error)
-                            self._batch_sizes[key] = max(self._policy.min_batch_size, self._batch_sizes[key] // 2)
-                            if kind is FailureKind.TRANSIENT:
-                                self._transient_attempts[key] += 1
-                                attempt = self._transient_attempts[key]
-                                delay = self._delay(attempt)
-                                self._retry_at[key] = monotonic() + delay
-                                self._restore(key, items)
-                                self._retry(key, kind, attempt, delay, span)
-                                return False
+            # The scope is fixed from here, so a later caller needs the drain after this one.
+            self._next_drain[key] = None
+            return await self._drain_locked(key)
 
-                            self._poison_attempts[key] += 1
-                            attempt = self._poison_attempts[key]
-                            if attempt >= self._policy.max_poison_retries:
-                                rejected = [BatchItemResult(Settlement.REJECT, "poison") for _ in items]
-                                await self._settle(key, items, rejected, started, span)
-                                self._poison_attempts[key] = 0
-                                no_progress = 0
-                                continue
-                            self._restore(key, items)
-                            self._retry(key, kind, attempt, 0.0, span)
-                            no_progress += 1
-                            if no_progress >= self._policy.max_drain_retries:
-                                return False
-                            continue
-
-                        try:
-                            if len(results) != len(items):
-                                raise ValueError("batch sink must return exactly one result per payload")
-                            if any(result.settlement not in (Settlement.ACK, Settlement.REJECT) for result in results):
-                                raise ValueError("batch sink returned a non-terminal result")
-                        except Exception:
-                            self._restore(key, items)
-                            raise
-
-                        await self._settle(key, items, results, started, span)
-                        self._batch_sizes[key] = min(self._policy.batch_size, self._batch_sizes[key] + 1)
-                        self._transient_attempts[key] = 0
-                        self._poison_attempts[key] = 0
-                        self._retry_at[key] = 0.0
-                        no_progress = 0
-                except asyncio.CancelledError:
-                    if not any(item in self._queues[key] for item in items):
+    async def _drain_locked(self, key: KeyT) -> bool:
+        await self._release_expired(key)
+        no_progress = 0
+        remaining = self._pending(key)
+        while remaining > 0:
+            if not self._queues[key]:
+                if self._arriving[key] and await self._next_arrival(key):
+                    continue
+                break
+            if monotonic() < self._retry_at[key]:
+                return False
+            items = self._pop(key)
+            lost: list[tuple[_Pending[PayloadT], Exception]] = []
+            acquired = False
+            started = perf_counter()
+            links = [item.span_context for item in items if item.span_context is not None][:64]
+            try:
+                await self._flush_capacity.acquire()
+                acquired = True
+                observation = partial(self._observer.flush, key, len(items), links)
+                with _IsolatedContext(observation) as span:
+                    try:
+                        results = list(await self._sink.write(key, [item.payload for item in items]))
+                    except asyncio.CancelledError:
                         self._restore(key, items)
-                    raise
-                finally:
-                    if acquired:
-                        self._flush_capacity.release()
-            return True
+                        raise
+                    except Exception as error:
+                        kind = self._classifier(error)
+                        self._batch_sizes[key] = max(self._policy.min_batch_size, self._batch_sizes[key] // 2)
+                        if kind is FailureKind.TRANSIENT:
+                            self._transient_attempts[key] += 1
+                            attempt = self._transient_attempts[key]
+                            delay = self._delay(attempt)
+                            self._retry_at[key] = monotonic() + delay
+                            self._restore(key, items)
+                            self._retry(key, kind, attempt, delay, span)
+                            return False
+
+                        self._poison_attempts[key] += 1
+                        attempt = self._poison_attempts[key]
+                        if attempt >= self._policy.max_poison_retries:
+                            rejected = [BatchItemResult(Settlement.REJECT, "poison") for _ in items]
+                            await self._settle(key, items, rejected, started, span, lost)
+                            self._poison_attempts[key] = 0
+                            no_progress = 0
+                            remaining -= len(items)
+                            continue
+                        self._restore(key, items)
+                        self._retry(key, kind, attempt, 0.0, span)
+                        no_progress += 1
+                        if no_progress >= self._policy.max_drain_retries:
+                            return False
+                        continue
+
+                    try:
+                        if len(results) != len(items):
+                            raise ValueError("batch sink must return exactly one result per payload")
+                        if any(result.settlement not in (Settlement.ACK, Settlement.REJECT) for result in results):
+                            raise ValueError("batch sink returned a non-terminal result")
+                    except Exception:
+                        self._restore(key, items)
+                        raise
+
+                    await self._settle(key, items, results, started, span, lost)
+                    remaining -= len(items)
+                    self._batch_sizes[key] = min(self._policy.batch_size, self._batch_sizes[key] + 1)
+                    self._transient_attempts[key] = 0
+                    self._poison_attempts[key] = 0
+                    self._retry_at[key] = 0.0
+                    no_progress = 0
+            except asyncio.CancelledError:
+                if not any(item in self._queues[key] for item in items):
+                    self._restore(key, items)
+                raise
+            finally:
+                if acquired:
+                    self._flush_capacity.release()
+                self._report_lost(key, lost)
+        return self._pending(key) == 0
 
     async def flush_all(self) -> bool:
         results = await asyncio.gather(*(self.flush(key) for key in self._queues))
         return all(results)
 
     async def run_periodic(self) -> None:
+        """Flush every key on its own clock until :meth:`shutdown`, whatever any one key is doing."""
+        await asyncio.gather(*(self._run_periodic_key(key) for key in self._queues))
+
+    async def _run_periodic_key(self, key: KeyT) -> None:
         while not self._shutdown.is_set():
             try:
                 await asyncio.wait_for(self._shutdown.wait(), timeout=self._policy.flush_interval_s)
             except TimeoutError:
-                await self.flush_all()
+                try:
+                    await self.flush(key)
+                except Exception:
+                    self._periodic_failures[key] += 1
+                    logger.exception(f"❌ Periodic flush of {key} failed; its work stays queued for the next tick")
 
     def shutdown(self) -> None:
         self._shutdown.set()
 
     def snapshot(self) -> object:
         return {
-            "pending": {key: len(queue) for key, queue in self._queues.items()},
+            "pending": {key: self._pending(key) for key in self._queues},
             "batch_sizes": dict(self._batch_sizes),
             "transient_attempts": dict(self._transient_attempts),
             "poison_attempts": dict(self._poison_attempts),
             "shutdown": self._shutdown.is_set(),
+            "oldest_pending_age_s": {key: monotonic() - queue[0].received_at if queue else 0.0 for key, queue in self._queues.items()},
+            "periodic_failures": dict(self._periodic_failures),
+            "lost_deliveries": dict(self._lost_deliveries),
         }
