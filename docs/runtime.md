@@ -134,12 +134,14 @@ own and survives a consumer restart. The bound counts deliveries; the time depen
 | Path | Bound | Failure survived | Persistent failure ends |
 | --- | --- | --- | --- |
 | `run_delivery` with `OutageBackoff` | `DEFAULT_MAX_REQUEUES`, 500 | About 8.3 hours at the 60 s cap | Within 500 × (60 s + one attempt) |
-| `run_delivery` with no wait | 500 | Seconds: pass a wait | 501 deliveries, seconds |
-| `AsyncBatchEngine` held deliveries | `BatchPolicy.max_requeues`, 20 | `max_requeues` × `max_hold_s` | 21 holds; about 8.3 hours at 1500 s |
+| `run_delivery` with no wait | None by default: pass `max_requeues` | Unbounded unless passed | Never unless passed |
+| `AsyncBatchEngine` held deliveries | `BatchPolicy.max_requeues`, opt-in with `max_hold_s` | `max_requeues` × `max_hold_s` | About 8.3 hours at 20 × 1500 s |
 | Any other `nack(requeue=True)` site | `requeue_or_dead_letter` | Set by the caller's wait | Set by the caller's wait |
 
-A message failing on a healthy backend reaches its bound far sooner, because `OutageBackoff` resets
-on each success. Past the bound the delivery is nacked without requeue, logged at error level, and
+`run_delivery` applies the wait to every requeue, including one the handler returned, so a budget
+always costs time. There is no default budget without a wait, because a count of instant nacks
+would dead-letter good records seconds into an outage. A message failing on a healthy backend
+reaches its bound far sooner, because `OutageBackoff` resets on each success. Past the bound the delivery is nacked without requeue, logged at error level, and
 reported with the outcome `redelivery_exhausted`, so it lands in the DLQ with reason `rejected`. A
 queue with no dead-letter exchange drops it instead.
 

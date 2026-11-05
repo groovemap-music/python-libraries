@@ -288,12 +288,16 @@ class Observer:
         self.settled_results.append(result)
 
 
+async def no_wait() -> None:
+    return None
+
+
 async def failing() -> DeliveryResult:
     raise ConnectionError("still failing")
 
 
 async def test_a_failing_message_dead_letters_at_the_default_bound(poison: Poison) -> None:
-    """A real broker, the shipped budget, no wait: exactly budget + 1 deliveries, then the DLQ."""
+    """A real broker and the shipped budget: exactly budget + 1 deliveries, then the DLQ."""
     observer = Observer()
     deliveries = 0
     done = asyncio.Event()
@@ -301,7 +305,9 @@ async def test_a_failing_message_dead_letters_at_the_default_bound(poison: Poiso
     async def handle(message: AbstractIncomingMessage) -> None:
         nonlocal deliveries
         deliveries += 1
-        result = await run_delivery(message, failing, classifier=Transient(), observer=observer, destination="q", entity="e")
+        result = await run_delivery(
+            message, failing, classifier=Transient(), observer=observer, destination="q", entity="e", wait_before_requeue=no_wait
+        )
         if result.settlement is Settlement.REJECT:
             done.set()
 

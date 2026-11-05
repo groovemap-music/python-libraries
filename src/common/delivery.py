@@ -234,13 +234,17 @@ async def run_delivery(
     entity: str,
     headers: object | None = None,
     wait_before_requeue: Callable[[], Awaitable[None]] | None = None,
-    max_requeues: int | None = DEFAULT_MAX_REQUEUES,
+    max_requeues: int | None = None,
 ) -> DeliveryResult:
     """Run one handler attempt and apply at most one terminal settlement.
 
-    A requeue past ``max_requeues`` is dead-lettered instead and reported with the outcome
-    ``redelivery_exhausted``. ``None`` removes the bound, and nothing else provides one.
+    Every requeue, raised or returned by the handler, waits on ``wait_before_requeue`` first. A
+    requeue past the budget is dead-lettered instead and reported with the outcome
+    ``redelivery_exhausted``. The budget is ``max_requeues``, or ``DEFAULT_MAX_REQUEUES`` when there
+    is a wait. An unpaced requeue has no default budget, because a count of instant nacks would
+    dead-letter good records seconds into an outage: pass a wait, or ``max_requeues`` explicitly.
     """
+    budget = DEFAULT_MAX_REQUEUES if max_requeues is None and wait_before_requeue is not None else max_requeues
     started = perf_counter()
     with _IsolatedObservation(observer, destination, headers) as span:
         try:
@@ -250,21 +254,22 @@ async def run_delivery(
         except Exception as error:
             kind = classifier(error)
             if kind is FailureKind.TRANSIENT:
-                if wait_before_requeue is not None and not requeues_spent(delivery, max_requeues):
-                    await wait_before_requeue()
                 result = DeliveryResult(Settlement.REQUEUE, kind.value, type(error).__name__)
             else:
                 result = DeliveryResult(Settlement.REJECT, kind.value, type(error).__name__)
 
-        if result.settlement is Settlement.REQUEUE and requeues_spent(delivery, max_requeues):
-            logger.error(
-                "☠️ Redelivery budget spent, dead-lettering",
-                destination=destination,
-                handouts=broker_handouts(delivery),
-                max_requeues=max_requeues,
-                error_type=result.error_type,
-            )
-            result = DeliveryResult(Settlement.REJECT, "redelivery_exhausted", result.error_type)
+        if result.settlement is Settlement.REQUEUE:
+            if requeues_spent(delivery, budget):
+                logger.error(
+                    "☠️ Redelivery budget spent, dead-lettering",
+                    destination=destination,
+                    handouts=broker_handouts(delivery),
+                    max_requeues=budget,
+                    error_type=result.error_type,
+                )
+                result = DeliveryResult(Settlement.REJECT, "redelivery_exhausted", result.error_type)
+            elif wait_before_requeue is not None:
+                await wait_before_requeue()
 
         await _settle(delivery, result.settlement)
         with contextlib.suppress(Exception):

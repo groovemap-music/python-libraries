@@ -19,7 +19,7 @@ from pika.exceptions import AMQPChannelError as PikaChannelError
 from pika.exceptions import AMQPConnectionError as PikaConnectionError
 
 from common import runtime_metrics, tracing
-from common.delivery import DeliveryObserver, DeliveryResult, FailureKind, Settlement, run_delivery
+from common.delivery import DeliveryObserver, DeliveryResult, FailureKind, Settlement, broker_handouts, run_delivery
 
 from .db_resilience import (
     CircuitBreaker,
@@ -474,7 +474,8 @@ async def process_message_with_retry(
         return DeliveryResult(Settlement.ACK, "processed")
 
     async def wait() -> None:
-        await asyncio.sleep(backoff.get_delay(0))
+        # Growing with the broker's count, so the default redelivery budget buys hours, not minutes.
+        await asyncio.sleep(backoff.get_delay(broker_handouts(message)))
 
     class _Classifier:
         def __call__(self, error: BaseException) -> FailureKind:

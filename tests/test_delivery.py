@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from common.delivery import DeliveryResult, FailureKind, Settlement, broker_handouts, requeue_or_dead_letter, run_delivery
+from common.delivery import DEFAULT_MAX_REQUEUES, DeliveryResult, FailureKind, Settlement, broker_handouts, requeue_or_dead_letter, run_delivery
 
 
 class Observer:
@@ -324,3 +324,63 @@ async def test_run_delivery_bounds_a_requeue_the_handler_returned() -> None:
     )
 
     assert result == DeliveryResult(Settlement.REJECT, "redelivery_exhausted", "Reconciliation")
+
+
+@pytest.mark.asyncio
+async def test_run_delivery_paces_a_requeue_the_handler_returned() -> None:
+    message = _message({"x-acquired-count": 1})
+    wait = AsyncMock()
+    observer = MagicMock()
+    observer.consume.return_value = nullcontext()
+
+    async def operation() -> DeliveryResult:
+        return DeliveryResult(Settlement.REQUEUE, "failed", "Reconciliation")
+
+    await run_delivery(
+        message,
+        operation,
+        classifier=lambda _error: FailureKind.TRANSIENT,
+        observer=observer,
+        destination="q",
+        entity="e",
+        wait_before_requeue=wait,
+    )
+
+    wait.assert_awaited_once()
+    message.nack.assert_awaited_once_with(requeue=True)
+
+
+@pytest.mark.asyncio
+async def test_an_unpaced_requeue_has_no_default_budget() -> None:
+    message = _message({"x-acquired-count": 100_000})
+    observer = MagicMock()
+    observer.consume.return_value = nullcontext()
+
+    async def operation() -> DeliveryResult:
+        raise ConnectionError("down")
+
+    await run_delivery(message, operation, classifier=lambda _error: FailureKind.TRANSIENT, observer=observer, destination="q", entity="e")
+
+    message.nack.assert_awaited_once_with(requeue=True)
+
+
+@pytest.mark.asyncio
+async def test_a_paced_requeue_gets_the_default_budget() -> None:
+    message = _message({"x-acquired-count": DEFAULT_MAX_REQUEUES})
+    observer = MagicMock()
+    observer.consume.return_value = nullcontext()
+
+    async def operation() -> DeliveryResult:
+        raise ConnectionError("down")
+
+    result = await run_delivery(
+        message,
+        operation,
+        classifier=lambda _error: FailureKind.TRANSIENT,
+        observer=observer,
+        destination="q",
+        entity="e",
+        wait_before_requeue=AsyncMock(),
+    )
+
+    assert result.outcome == "redelivery_exhausted"
