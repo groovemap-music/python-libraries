@@ -31,6 +31,9 @@ logger = structlog.get_logger(__name__)
 # OutageBackoff's 60 s cap this is about 8.3 hours, so a database outage does not dead-letter
 # records that are fine, and a message failing on a healthy backend ends much sooner.
 DEFAULT_MAX_REQUEUES = 500
+# Shortest wait that counts as pacing, so a no-op wait cannot earn the default budget. The runtime's
+# real paces start at 1 s (ExponentialBackoff) and 2 s (OutageBackoff).
+MIN_PACED_WAIT_S = 0.5
 
 
 class WriteAdmission:
@@ -238,13 +241,13 @@ async def run_delivery(
 ) -> DeliveryResult:
     """Run one handler attempt and apply at most one terminal settlement.
 
-    Every requeue, raised or returned by the handler, waits on ``wait_before_requeue`` first. A
-    requeue past the budget is dead-lettered instead and reported with the outcome
-    ``redelivery_exhausted``. The budget is ``max_requeues``, or ``DEFAULT_MAX_REQUEUES`` when there
-    is a wait. An unpaced requeue has no default budget, because a count of instant nacks would
-    dead-letter good records seconds into an outage: pass a wait, or ``max_requeues`` explicitly.
+    Every requeue, raised or returned by the handler, waits on ``wait_before_requeue`` first, and
+    that wait must wait on every call. A requeue past the budget is dead-lettered instead and
+    reported with the outcome ``redelivery_exhausted``. An explicit ``max_requeues`` always applies.
+    Otherwise the budget is ``DEFAULT_MAX_REQUEUES``, and only when this call's wait really took at
+    least ``MIN_PACED_WAIT_S``: a count of instant nacks would dead-letter good records seconds into
+    an outage, so an unpaced requeue has no default budget. Pace it, or pass ``max_requeues``.
     """
-    budget = DEFAULT_MAX_REQUEUES if max_requeues is None and wait_before_requeue is not None else max_requeues
     started = perf_counter()
     with _IsolatedObservation(observer, destination, headers) as span:
         try:
@@ -259,6 +262,12 @@ async def run_delivery(
                 result = DeliveryResult(Settlement.REJECT, kind.value, type(error).__name__)
 
         if result.settlement is Settlement.REQUEUE:
+            paced = False
+            if wait_before_requeue is not None and not requeues_spent(delivery, max_requeues):
+                wait_started = perf_counter()
+                await wait_before_requeue()
+                paced = perf_counter() - wait_started >= MIN_PACED_WAIT_S
+            budget = DEFAULT_MAX_REQUEUES if max_requeues is None and paced else max_requeues
             if requeues_spent(delivery, budget):
                 logger.error(
                     "☠️ Redelivery budget spent, dead-lettering",
@@ -268,8 +277,6 @@ async def run_delivery(
                     error_type=result.error_type,
                 )
                 result = DeliveryResult(Settlement.REJECT, "redelivery_exhausted", result.error_type)
-            elif wait_before_requeue is not None:
-                await wait_before_requeue()
 
         await _settle(delivery, result.settlement)
         with contextlib.suppress(Exception):

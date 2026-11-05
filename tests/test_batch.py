@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import nullcontext
-from unittest.mock import AsyncMock, Mock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -829,3 +830,50 @@ async def test_a_drain_stops_waiting_when_the_last_arrival_is_cancelled() -> Non
 
     with pytest.raises(asyncio.CancelledError):
         await arriving
+
+
+def _headerless_engine(max_requeues: int | None) -> AsyncBatchEngine[str, int]:
+    return AsyncBatchEngine(
+        ["k"],
+        policy=BatchPolicy(
+            batch_size=10,
+            flush_interval_s=1.0,
+            max_pending=10,
+            max_concurrent_flushes=1,
+            min_batch_size=1,
+            backoff_initial_s=0.01,
+            backoff_max_s=0.02,
+            backoff_multiplier=2.0,
+            max_drain_retries=1,
+            max_poison_retries=1,
+            max_hold_s=1.0,
+            max_requeues=max_requeues,
+        ),
+        sink=AsyncMock(),
+        classifier=lambda _error: FailureKind.TRANSIENT,
+        observer=MagicMock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_budget_with_headerless_deliveries_warns_once() -> None:
+    engine = _headerless_engine(20)
+    delivery = SimpleNamespace(ack=AsyncMock(), nack=AsyncMock())
+    with patch("common.batch.logger") as logger:
+        await engine.submit("k", 1, delivery)
+        await engine.submit("k", 2, delivery)
+    assert logger.warning.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("max_requeues", "delivery"), [(None, SimpleNamespace()), (20, SimpleNamespace(headers={}))])
+async def test_no_warning_without_a_budget_or_with_headers(max_requeues: int | None, delivery: object) -> None:
+    engine = _headerless_engine(max_requeues)
+    with patch("common.batch.logger") as logger:
+        await engine.submit("k", 1, delivery)  # type: ignore[arg-type]
+    logger.warning.assert_not_called()
+
+
+def test_a_budget_below_one_is_refused() -> None:
+    with pytest.raises(ValueError, match="max_requeues"):
+        _headerless_engine(0)

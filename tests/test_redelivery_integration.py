@@ -10,6 +10,7 @@ Requires RabbitMQ; skipped unless ``RABBITMQ_HOST`` is set.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -18,8 +19,10 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from time import monotonic
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import quote
 
 import aio_pika
+import httpx
 import pytest
 import pytest_asyncio
 
@@ -43,6 +46,7 @@ pytestmark = [
 USER = os.environ.get("RABBITMQ_USERNAME", "groovemap")
 PASSWORD = os.environ.get("RABBITMQ_PASSWORD", "groovemap")
 AMQP_PORT = int(os.environ.get("RABBITMQ_AMQP_PORT", "5672"))
+MGMT_PORT = int(os.environ.get("RABBITMQ_MGMT_PORT", "15672"))
 URL = f"amqp://{USER}:{PASSWORD}@{RABBITMQ_HOST}:{AMQP_PORT}/"
 LIMIT = 20
 # One past the limit: the broker dead-letters on the return that takes the count over it.
@@ -58,6 +62,10 @@ class Poison:
     name: str
     dlq: AbstractQueue
     arguments: dict[str, Any]
+    publisher: aio_pika.abc.AbstractChannel
+
+    async def publish(self, body: bytes) -> None:
+        await self.publisher.default_exchange.publish(aio_pika.Message(body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT), routing_key=self.name)
 
     async def take(self, connection: aio_pika.abc.AbstractConnection) -> AbstractIncomingMessage | None:
         """Consume one delivery on a new channel and leave it unsettled."""
@@ -108,7 +116,7 @@ async def poison(request: pytest.FixtureRequest) -> AsyncIterator[Poison]:
     queue = await channel.declare_queue(name, durable=True, arguments=arguments)
     await channel.default_exchange.publish(aio_pika.Message(b"poison", delivery_mode=aio_pika.DeliveryMode.PERSISTENT), routing_key=name)
     try:
-        yield Poison(consumer, name, dlq, arguments)
+        yield Poison(consumer, name, dlq, arguments, channel)
     finally:
         await consumer.close()
         await queue.delete(if_unused=False, if_empty=False)
@@ -146,6 +154,58 @@ async def test_nack_requeue_never_spends_the_delivery_limit(poison: Poison) -> N
     assert await poison.dead_letter_reason(wait_s=1.0) is None
 
 
+async def test_nack_after_cancelling_the_consumer_never_spends_the_limit(poison: Poison) -> None:
+    channel = await poison.consumer.channel()
+    await channel.set_qos(prefetch_count=1)
+    queue = await channel.declare_queue(poison.name, durable=True, arguments=poison.arguments)
+    seen: list[tuple[object, object]] = []
+    for _ in range(BROKER_DELIVERIES + 4):
+        arrived: asyncio.Future[AbstractIncomingMessage] = asyncio.get_running_loop().create_future()
+
+        async def handle(message: AbstractIncomingMessage, arrived: asyncio.Future[AbstractIncomingMessage] = arrived) -> None:
+            arrived.set_result(message)
+
+        tag = await queue.consume(handle)
+        message = await asyncio.wait_for(arrived, 5)
+        seen.append(counts(message))
+        await queue.cancel(tag)
+        await message.nack(requeue=True)
+    assert seen[-1] == (None, BROKER_DELIVERIES + 3)
+    assert await poison.dead_letter_reason(wait_s=1.0) is None
+
+
+async def test_nack_after_basic_get_never_spends_the_limit(poison: Poison) -> None:
+    channel = await poison.consumer.channel()
+    queue = await channel.declare_queue(poison.name, durable=True, arguments=poison.arguments)
+    seen: list[tuple[object, object]] = []
+    for _ in range(BROKER_DELIVERIES + 4):
+        message = await queue.get(fail=True, timeout=5)
+        assert message is not None
+        seen.append(counts(message))
+        await message.nack(requeue=True)
+    assert seen[-1] == (None, BROKER_DELIVERIES + 3)
+    assert await poison.dead_letter_reason(wait_s=1.0) is None
+
+
+async def test_a_nacked_message_goes_back_to_the_head(poison: Poison) -> None:
+    await poison.publish(b"behind")
+    bodies: list[bytes] = []
+    done = asyncio.Event()
+
+    async def handle(message: AbstractIncomingMessage) -> None:
+        bodies.append(message.body)
+        if len(bodies) >= 4:
+            done.set()
+        if message.body == b"poison" and len(bodies) <= 2:
+            await message.nack(requeue=True)
+        else:
+            await message.ack()
+
+    await poison.consume_forever(handle)
+    await asyncio.wait_for(done.wait(), 10)
+    assert bodies == [b"poison", b"poison", b"poison", b"behind"]
+
+
 async def test_reject_requeue_spends_the_delivery_limit(poison: Poison) -> None:
     seen = await settle_until(poison, lambda message: message.reject(requeue=True), BROKER_DELIVERIES)
     assert seen[-1] == (LIMIT, LIMIT)
@@ -173,6 +233,59 @@ async def main():
 
 asyncio.run(main())
 """
+
+
+async def test_cancelling_then_closing_spends_the_delivery_limit(poison: Poison) -> None:
+    """The services' shutdown: stop consuming, leave the delivery unsettled, close."""
+    seen: list[tuple[object, object]] = []
+    for _ in range(BROKER_DELIVERIES + 1):
+        connection = await aio_pika.connect(URL)
+        channel = await connection.channel()
+        await channel.set_qos(prefetch_count=1)
+        queue = await channel.declare_queue(poison.name, durable=True, arguments=poison.arguments)
+        arrived: asyncio.Future[AbstractIncomingMessage] = asyncio.get_running_loop().create_future()
+
+        async def handle(message: AbstractIncomingMessage, arrived: asyncio.Future[AbstractIncomingMessage] = arrived) -> None:
+            arrived.set_result(message)
+
+        tag = await queue.consume(handle)
+        try:
+            message = await asyncio.wait_for(arrived, 2)
+        except TimeoutError:
+            await connection.close()
+            break
+        seen.append(counts(message))
+        await queue.cancel(tag)
+        await connection.close()
+    assert len(seen) == BROKER_DELIVERIES
+    assert seen[-1] == (LIMIT, LIMIT)
+    assert await poison.dead_letter_reason() == "delivery_limit"
+
+
+@pytest.mark.timeout(90)
+async def test_a_forced_connection_close_spends_the_delivery_limit(poison: Poison) -> None:
+    """Two cycles show the count moving: the management API lists a new connection in seconds, not at once."""
+    seen: list[tuple[object, object]] = []
+    async with httpx.AsyncClient(base_url=f"http://{RABBITMQ_HOST}:{MGMT_PORT}", auth=(USER, PASSWORD), timeout=15.0) as client:
+        for cycle in range(3):
+            label = f"{poison.name}-{cycle}"
+            connection = await aio_pika.connect(f"{URL}?name={label}")
+            message = await poison.take(connection)
+            assert message is not None
+            seen.append(counts(message))
+            while True:
+                listed = [
+                    row["name"]
+                    for row in (await client.get("/api/connections")).json()
+                    if (row.get("client_properties") or {}).get("connection_name") == label
+                ]
+                if listed:
+                    break
+                await asyncio.sleep(0.25)
+            (await client.delete(f"/api/connections/{quote(listed[0], safe='')}")).raise_for_status()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(connection.close(), 2)
+    assert seen == [(None, None), (1, 1), (2, 2)]
 
 
 async def test_a_killed_consumer_spends_the_delivery_limit(poison: Poison) -> None:
@@ -288,16 +401,12 @@ class Observer:
         self.settled_results.append(result)
 
 
-async def no_wait() -> None:
-    return None
-
-
 async def failing() -> DeliveryResult:
     raise ConnectionError("still failing")
 
 
 async def test_a_failing_message_dead_letters_at_the_default_bound(poison: Poison) -> None:
-    """A real broker and the shipped budget: exactly budget + 1 deliveries, then the DLQ."""
+    """A real broker and the shipped number: exactly budget + 1 deliveries, then the DLQ."""
     observer = Observer()
     deliveries = 0
     done = asyncio.Event()
@@ -306,7 +415,7 @@ async def test_a_failing_message_dead_letters_at_the_default_bound(poison: Poiso
         nonlocal deliveries
         deliveries += 1
         result = await run_delivery(
-            message, failing, classifier=Transient(), observer=observer, destination="q", entity="e", wait_before_requeue=no_wait
+            message, failing, classifier=Transient(), observer=observer, destination="q", entity="e", max_requeues=DEFAULT_MAX_REQUEUES
         )
         if result.settlement is Settlement.REJECT:
             done.set()
@@ -317,6 +426,52 @@ async def test_a_failing_message_dead_letters_at_the_default_bound(poison: Poiso
     assert observer.settled_results[-1].outcome == "redelivery_exhausted"
     assert observer.settled_results[-1].error_type == "ConnectionError"
     assert await poison.dead_letter_reason() == "rejected"
+
+
+async def test_a_wait_that_takes_time_reaches_the_default_budget(poison: Poison, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shipped default, earned by a real sleep; the threshold is lowered only to keep this quick."""
+    monkeypatch.setattr("common.delivery.MIN_PACED_WAIT_S", 0.001)
+    deliveries = 0
+    done = asyncio.Event()
+
+    async def wait() -> None:
+        await asyncio.sleep(0.002)
+
+    async def handle(message: AbstractIncomingMessage) -> None:
+        nonlocal deliveries
+        deliveries += 1
+        result = await run_delivery(
+            message, failing, classifier=Transient(), observer=Observer(), destination="q", entity="e", wait_before_requeue=wait
+        )
+        if result.settlement is Settlement.REJECT:
+            done.set()
+
+    await poison.consume_forever(handle)
+    await asyncio.wait_for(done.wait(), 40)
+    assert deliveries == DEFAULT_MAX_REQUEUES + 1
+    assert await poison.dead_letter_reason() == "rejected"
+
+
+async def test_a_no_op_wait_cannot_dead_letter_seconds_into_an_outage(poison: Poison) -> None:
+    """The shape t4h measured: a wait that returns at once earns no budget, so the message stays."""
+    deliveries = 0
+    done = asyncio.Event()
+    target = DEFAULT_MAX_REQUEUES * 2
+
+    async def wait() -> None:
+        return None
+
+    async def handle(message: AbstractIncomingMessage) -> None:
+        nonlocal deliveries
+        deliveries += 1
+        if deliveries >= target:
+            done.set()
+            return
+        await run_delivery(message, failing, classifier=Transient(), observer=Observer(), destination="q", entity="e", wait_before_requeue=wait)
+
+    await poison.consume_forever(handle)
+    await asyncio.wait_for(done.wait(), 60)
+    assert await poison.dead_letter_reason(wait_s=1.0) is None
 
 
 async def test_without_the_bound_the_same_message_never_ends(poison: Poison) -> None:

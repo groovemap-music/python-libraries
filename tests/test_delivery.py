@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import nullcontext
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from common.delivery import DEFAULT_MAX_REQUEUES, DeliveryResult, FailureKind, Settlement, broker_handouts, requeue_or_dead_letter, run_delivery
+
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 class Observer:
@@ -364,23 +369,68 @@ async def test_an_unpaced_requeue_has_no_default_budget() -> None:
     message.nack.assert_awaited_once_with(requeue=True)
 
 
-@pytest.mark.asyncio
-async def test_a_paced_requeue_gets_the_default_budget() -> None:
-    message = _message({"x-acquired-count": DEFAULT_MAX_REQUEUES})
-    observer = MagicMock()
-    observer.consume.return_value = nullcontext()
-
+def _requeueing_operation() -> Callable[[], Awaitable[DeliveryResult]]:
     async def operation() -> DeliveryResult:
         raise ConnectionError("down")
 
-    result = await run_delivery(
+    return operation
+
+
+async def _settle_with_wait(message: AsyncMock, wait: Callable[[], Awaitable[None]]) -> DeliveryResult:
+    observer = MagicMock()
+    observer.consume.return_value = nullcontext()
+    return await run_delivery(
         message,
-        operation,
+        _requeueing_operation(),
         classifier=lambda _error: FailureKind.TRANSIENT,
         observer=observer,
         destination="q",
         entity="e",
-        wait_before_requeue=AsyncMock(),
+        wait_before_requeue=wait,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_wait_that_takes_time_earns_the_default_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("common.delivery.MIN_PACED_WAIT_S", 0.001)
+    message = _message({"x-acquired-count": DEFAULT_MAX_REQUEUES})
+
+    async def wait() -> None:
+        await asyncio.sleep(0.01)
+
+    result = await _settle_with_wait(message, wait)
+
+    assert result.outcome == "redelivery_exhausted"
+    message.nack.assert_awaited_once_with(requeue=False)
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_wait_does_not_earn_the_default_budget() -> None:
+    message = _message({"x-acquired-count": DEFAULT_MAX_REQUEUES * 10})
+
+    result = await _settle_with_wait(message, AsyncMock())
+
+    assert result.settlement is Settlement.REQUEUE
+    message.nack.assert_awaited_once_with(requeue=True)
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_budget_applies_whatever_the_wait_does() -> None:
+    message = _message({"x-acquired-count": 5})
+    wait = AsyncMock()
+    observer = MagicMock()
+    observer.consume.return_value = nullcontext()
+
+    result = await run_delivery(
+        message,
+        _requeueing_operation(),
+        classifier=lambda _error: FailureKind.TRANSIENT,
+        observer=observer,
+        destination="q",
+        entity="e",
+        wait_before_requeue=wait,
+        max_requeues=5,
     )
 
     assert result.outcome == "redelivery_exhausted"
+    wait.assert_not_awaited()

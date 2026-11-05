@@ -13,7 +13,7 @@ from an implementation module, when a name appears here.
 | --- | --- |
 | Configuration and logging | `neo4j_security_kwargs`, `parse_postgres_host_port`, `setup_logging`, `valkey_key`, `valkey_pattern` |
 | Data and diagnostics | `normalize_record`, `describe_exception` |
-| Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `WriteAdmission`, `run_delivery`, `DEFAULT_MAX_REQUEUES`, `broker_handouts`, `requeue_or_dead_letter` |
+| Delivery lifecycle | `Settlement`, `FailureKind`, `DeliveryResult`, `Delivery`, `FailureClassifier`, `DeliveryObserver`, `WriteAdmission`, `run_delivery`, `DEFAULT_MAX_REQUEUES`, `MIN_PACED_WAIT_S`, `broker_handouts`, `requeue_or_dead_letter` |
 | Discogs batch lifecycle | `BatchItemResult`, `BatchPolicy`, `BatchSink`, `BatchObserver`, `AsyncBatchEngine` |
 | First-party events | `Event`, `Impression`, `EventValidationError`, `event_types`, `surfaces`, `consent_purposes`, `payload_schema_for`, `is_valid_event_type`, `validate_event`, `validate_impression`, `new_event`, `new_impression` |
 | Generic resilience | `AsyncResilientConnection`, `CircuitBreaker`, `CircuitBreakerConfig`, `CircuitOpenError`, `CircuitState`, `ConnectionEstablishmentError`, `DatabaseUnavailableError`, `ExponentialBackoff`, `ResilientConnection`, `async_resilient_connection`, `resilient_connection` |
@@ -134,19 +134,21 @@ own and survives a consumer restart. The bound counts deliveries; the time depen
 | Path | Bound | Failure survived | Persistent failure ends |
 | --- | --- | --- | --- |
 | `run_delivery` with `OutageBackoff` | `DEFAULT_MAX_REQUEUES`, 500 | About 8.3 hours at the 60 s cap | Within 500 × (60 s + one attempt) |
-| `run_delivery` with no wait | None by default: pass `max_requeues` | Unbounded unless passed | Never unless passed |
+| `run_delivery` with no wait, or one under `MIN_PACED_WAIT_S` | None by default: pass `max_requeues` | Unbounded unless passed | Never unless passed |
 | `AsyncBatchEngine` held deliveries | `BatchPolicy.max_requeues`, opt-in with `max_hold_s` | `max_requeues` × `max_hold_s` | About 8.3 hours at 20 × 1500 s |
 | Any other `nack(requeue=True)` site | `requeue_or_dead_letter` | Set by the caller's wait | Set by the caller's wait |
 
-`run_delivery` applies the wait to every requeue, including one the handler returned, so a budget
-always costs time. There is no default budget without a wait, because a count of instant nacks
-would dead-letter good records seconds into an outage. A message failing on a healthy backend
+`run_delivery` applies the wait to every requeue, including one the handler returned, and the wait
+must wait on every call. The default budget applies only when that call's wait really took at least
+`MIN_PACED_WAIT_S` (0.5 s), because a count of instant nacks would dead-letter good records seconds
+into an outage: a no-op wait reached 501 deliveries in 0.83 s. An explicit `max_requeues` always
+applies. A message failing on a healthy backend
 reaches its bound far sooner, because `OutageBackoff` resets on each success. Past the bound the delivery is nacked without requeue, logged at error level, and
 reported with the outcome `redelivery_exhausted`, so it lands in the DLQ with reason `rejected`. A
 queue with no dead-letter exchange drops it instead.
 
 The engine reads the headers from the delivery it was given, so a callback adapter must expose the
-broker's `headers`; without them `max_requeues` is never reached. A bare `nack(requeue=True)` is not
+broker's `headers`. Without them `max_requeues` is never reached, and the engine warns once. A bare `nack(requeue=True)` is not
 bounded by anything: use `requeue_or_dead_letter`.
 
 `PostgreSQLFailureClassifier` is the shared `FailureClassifier` for PostgreSQL. Connection-class

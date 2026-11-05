@@ -43,6 +43,7 @@ RUNTIME_EXPORTS = {
     "IdentifierValidationError",
     "Impression",
     "DEFAULT_MAX_REQUEUES",
+    "MIN_PACED_WAIT_S",
     "OutageBackoff",
     "PostgreSQLFailureClassifier",
     "ResilientConnection",

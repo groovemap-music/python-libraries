@@ -172,6 +172,7 @@ class AsyncBatchEngine[KeyT, PayloadT]:
         self._next_drain: dict[KeyT, _Drain | None] = dict.fromkeys(keys)
         self._periodic_failures = dict.fromkeys(keys, 0)
         self._lost_deliveries = dict.fromkeys(keys, 0)
+        self._warned_headerless = False
         self._shutdown = asyncio.Event()
 
     async def submit(
@@ -184,6 +185,9 @@ class AsyncBatchEngine[KeyT, PayloadT]:
     ) -> None:
         if key not in self._queues:
             raise KeyError(key)
+        if self._policy.max_requeues is not None and not self._warned_headerless and not hasattr(delivery, "headers"):
+            self._warned_headerless = True
+            logger.warning(f"⚠️ {key} deliveries expose no broker headers, so max_requeues={self._policy.max_requeues} can never be reached")
         self._arriving[key] += 1
         try:
             await self._capacity.acquire()
