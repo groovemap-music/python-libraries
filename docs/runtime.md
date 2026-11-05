@@ -142,7 +142,8 @@ own and survives a consumer restart. The bound counts deliveries; the time depen
 must wait on every call. The default budget applies only when that call's wait really took at least
 `MIN_PACED_WAIT_S` (0.5 s), because a count of instant nacks would dead-letter good records seconds
 into an outage: a no-op wait reached 501 deliveries in 0.83 s. An explicit `max_requeues` always
-applies. A message failing on a healthy backend
+applies. Only the current call is timed, so a conditional wait that sleeps only sometimes can
+dead-letter on its first real sleep once its hot nacks have passed the budget. A message failing on a healthy backend
 reaches its bound far sooner, because `OutageBackoff` resets on each success. Past the bound the delivery is nacked without requeue, logged at error level, and
 reported with the outcome `redelivery_exhausted`, so it lands in the DLQ with reason `rejected`. A
 queue with no dead-letter exchange drops it instead.
