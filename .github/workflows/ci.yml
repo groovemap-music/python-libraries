@@ -70,10 +70,38 @@ jobs:
           exit 1
         fi
 
+        # The batch engine's channel-loss tests need PostgreSQL as well as the broker; without it
+        # they skip, and only a mock would be left to catch a regression.
+        docker rm -f -v python-libraries-postgres >/dev/null 2>&1 || true
+        docker run --detach \
+          --name python-libraries-postgres \
+          --publish 5432:5432 \
+          --env POSTGRES_USER=groovemap \
+          --env POSTGRES_PASSWORD=groovemap \
+          --env POSTGRES_DB=groovemap \
+          postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        postgres_ready=false
+        for attempt in $(seq 1 30); do
+          if docker exec python-libraries-postgres pg_isready --quiet --host 127.0.0.1 --username groovemap --dbname groovemap; then
+            postgres_ready=true
+            break
+          fi
+          sleep 1
+        done
+        if [[ "${postgres_ready}" != "true" ]]; then
+          echo "::error::python-libraries-postgres did not become ready"
+          docker logs python-libraries-postgres 2>&1 || true
+          exit 1
+        fi
+
         {
           echo "RABBITMQ_HOST=127.0.0.1"
           echo "RABBITMQ_USERNAME=groovemap"
           echo "RABBITMQ_PASSWORD=groovemap"
+          echo "POSTGRES_HOST=127.0.0.1"
+          echo "POSTGRES_USER=groovemap"
+          echo "POSTGRES_PASSWORD=groovemap"
+          echo "POSTGRES_DB=groovemap"
         } >> "${GITHUB_ENV}"
       check-command: just check
       coverage-command: just coverage
