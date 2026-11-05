@@ -82,9 +82,12 @@ purge or maintenance policy. Transient failures retain original order without se
 deterministic failures shrink toward `min_batch_size` and reject only at the poison threshold;
 bounded drain failure retains work for `run_periodic`.
 
-`flush(key)` settles what was queued when it was called, so it returns under constant backlog and
-`True` means that work is settled, not that the queue is empty. Handlers flushing at the batch
-threshold do not line up: they share the one drain waiting behind the running one, so waiting tasks
+`flush(key)` returns `True` only if nothing is pending for that key when it ends, so a caller can
+gate a purge or maintenance on it. Pending means queued or still inside `submit` waiting for
+capacity, which is also what `snapshot()["pending"]` counts, and a flush waits for those handlers,
+up to `flush_interval_s` at a time. Each drain is bounded by the work present when it starts, so a
+key under constant backlog still returns, with `False`. Handlers flushing at the batch threshold do
+not line up: they share the one drain waiting behind the running one, so waiting tasks
 stay bounded however fast deliveries arrive. Cancelling a caller stops only its wait; the drain is
 cancelled, leaving its work queued, only when its last waiter is cancelled. `run_periodic` ticks each
 key independently, so a key's backlog or failure cannot delay another key's tail. An exception from

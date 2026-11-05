@@ -38,7 +38,7 @@ from common.rabbitmq_resilient import AsyncResilientRabbitMQ
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Sequence
+    from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
     from aio_pika.abc import AbstractChannel, AbstractIncomingMessage, AbstractRobustConnection
 
@@ -161,14 +161,29 @@ class Stack:
         self.queues = {key: f"gm-batch-{run}-{key}" for key in KEYS}
         self.tables = {key: f"gm_batch_{run}_{key}" for key in KEYS}
         self.sink = Sink(pool, self.tables)
+        self.prefetch = PREFETCH
+        self.gate_runs: list[int] = []
+        self.requeues = 0
+        self.gate: Callable[[str], Awaitable[bool]] | None = None
         self.published = dict.fromkeys(KEYS, 0)
         self.arguments: dict[str, Any] = {"x-queue-type": "quorum", "x-delivery-limit": 20}
+        self.configure(BATCH_SIZE, PREFETCH, MAX_PENDING)
+        self.channel: AbstractChannel | None = None
+        self.publishing: AbstractChannel | None = None
+        self.periodic: asyncio.Task[None] | None = None
+        self.handlers = 0
+        self.peak_handlers = 0
+        self.stop_backlog = asyncio.Event()
+
+    def configure(self, batch_size: int, prefetch: int, max_pending: int) -> None:
+        self.prefetch = prefetch
+        self.max_pending = max_pending
         self.engine: AsyncBatchEngine[str, dict[str, Any]] = AsyncBatchEngine(
             KEYS,
             policy=BatchPolicy(
-                batch_size=BATCH_SIZE,
+                batch_size=batch_size,
                 flush_interval_s=FLUSH_INTERVAL_S,
-                max_pending=MAX_PENDING,
+                max_pending=max_pending,
                 max_concurrent_flushes=2,
                 min_batch_size=1,
                 backoff_initial_s=0.1,
@@ -181,12 +196,6 @@ class Stack:
             classifier=PostgreSQLFailureClassifier(),
             observer=Observer(),
         )
-        self.channel: AbstractChannel | None = None
-        self.publishing: AbstractChannel | None = None
-        self.periodic: asyncio.Task[None] | None = None
-        self.handlers = 0
-        self.peak_handlers = 0
-        self.stop_backlog = asyncio.Event()
 
     async def declare(self) -> None:
         async with self.pool.connection() as connection:
@@ -204,7 +213,7 @@ class Stack:
 
     async def consume(self) -> AbstractChannel:
         channel = await self.connection.channel()
-        await channel.set_qos(prefetch_count=PREFETCH, global_=False)
+        await channel.set_qos(prefetch_count=self.prefetch, global_=False)
         for key, name in self.queues.items():
             queue = await channel.declare_queue(name, durable=True, arguments=self.arguments)
             await queue.consume(self._handler(key))
@@ -217,14 +226,33 @@ class Stack:
             self.handlers += 1
             self.peak_handlers = max(self.peak_handlers, self.handlers)
             try:
-                await self.engine.submit(key, json.loads(message.body), AmqpDelivery(message))
+                record = json.loads(message.body)
+                if record.get("type") == "extraction_complete":
+                    await self._complete(key, message)
+                    return
+                await self.engine.submit(key, record, AmqpDelivery(message))
                 state = cast("dict[str, dict[str, int]]", self.engine.snapshot())
-                if state["pending"][key] >= min(state["batch_sizes"][key], MAX_PENDING):
+                if state["pending"][key] >= min(state["batch_sizes"][key], self.max_pending):
                     await self.engine.flush(key)
             finally:
                 self.handlers -= 1
 
         return handle
+
+    async def _complete(self, key: str, message: AbstractIncomingMessage) -> None:
+        """What both loaders do with the end of a file: only a drained key may run its purge."""
+        assert self.gate is not None
+        if not await self.gate(key):
+            self.requeues += 1
+            await message.nack(requeue=True)
+            return
+        self.gate_runs.append(await self.rows(key))
+        await message.ack()
+
+    async def publish_marker(self, key: str) -> None:
+        assert self.publishing is not None
+        body = json.dumps({"type": "extraction_complete"}).encode()
+        await self.publishing.default_exchange.publish(aio_pika.Message(body), routing_key=self.queues[key])
 
     async def publish(self, key: str, count: int) -> None:
         assert self.publishing is not None
@@ -402,6 +430,58 @@ async def _at_least(value: Any, floor: int) -> bool:
     return bool(await value >= floor)
 
 
+async def _loader_gate(stack: Stack, key: str) -> bool:
+    """discogs-sql-loader's PostgreSQLBatchProcessor.flush_queue, whose backoff is this one's."""
+    for attempt in range(1, 6):
+        if await stack.engine.flush(key):
+            return True
+        if cast("dict[str, dict[str, int]]", stack.engine.snapshot())["pending"][key] == 0:
+            return True
+        await asyncio.sleep(0.1 * 2 ** (attempt - 1))
+    return False
+
+
+async def _enricher_gate(stack: Stack, key: str) -> bool:
+    """discogs-graph-enricher's flush_queue: one flush, and False requeues the marker at once."""
+    return await stack.engine.flush(key)
+
+
+@pytest.mark.parametrize("gate", [_loader_gate, _enricher_gate], ids=["loader-purge", "enricher-maintenance"])
+async def test_a_purge_cannot_run_while_records_are_in_flight_at_batch_size_500(stack: Stack, gate: Callable[[Stack, str], Awaitable[bool]]) -> None:
+    """Lux's settings. Another queue's backlog holds the shared capacity, so these records sit in
+    submit rather than the queue when the marker behind them asks whether the key has drained.
+    """
+    stack.configure(batch_size=500, prefetch=1000, max_pending=1000)
+    stack.gate = lambda key: gate(stack, key)
+    await stack.declare()
+    stack.sink.pace_s["releases"] = LOADER_WRITE_S
+    backlog = asyncio.create_task(stack.backlog("releases", BACKLOG))
+    try:
+        await _until("releases to backlog", lambda: _at_least(stack.ready("releases"), BACKLOG), 30)
+        await stack.consume()
+        await _until("the backlog to hold capacity", lambda: _at_least(stack.rows("releases"), 500), 30)
+
+        # Under prefetch, so the marker is delivered with every record before it still in flight.
+        records = 900
+        await stack.publish("artists", records)
+        await stack.publish_marker("artists")
+        await _until("the purge to run", lambda: _ran(stack), RECOVERY_DEADLINE_S)
+
+        assert stack.gate_runs == [records], f"purge saw {stack.gate_runs} of {records} rows"
+        # A marker requeued 20 times is dead-lettered, and then the purge never runs at all.
+        assert stack.requeues < 5
+    finally:
+        stack.stop_backlog.set()
+        await backlog
+
+    stack.sink.pace_s.clear()
+    await stack.assert_everything_stored_and_settled()
+
+
+async def _ran(stack: Stack) -> bool:
+    return bool(stack.gate_runs)
+
+
 async def test_a_flush_failure_does_not_end_periodic_flushing(stack: Stack) -> None:
     await stack.declare()
     stack.sink.malformed_once.add("artists")
@@ -427,7 +507,9 @@ async def test_consumer_timeout_with_deliveries_in_flight_loses_nothing(stack: S
         channel = await stack.consume()
         closed = await _closes(channel)
         reason = await asyncio.wait_for(closed, timeout=CONSUMER_TIMEOUT_DEADLINE_S)
-        assert "timed out" in str(reason).lower() or "PRECONDITION_FAILED" in str(reason), reason
+        # A channel error, or the broker cancels the consumer and aio-pika's re-consume reuses
+        # the tag, which closes the connection: RabbitMQ 4.3 does the second, and so might lux.
+        assert any(text in str(reason) for text in ("timed out", "PRECONDITION_FAILED", "NOT_ALLOWED", "reuse consumer tag")), reason
         assert await stack.rows("artists") == 0
 
         gate.set()

@@ -160,6 +160,8 @@ class AsyncBatchEngine[KeyT, PayloadT]:
         self._transient_attempts = dict.fromkeys(keys, 0)
         self._poison_attempts = dict.fromkeys(keys, 0)
         self._retry_at = dict.fromkeys(keys, 0.0)
+        self._arriving = dict.fromkeys(keys, 0)
+        self._arrivals = {key: asyncio.Event() for key in keys}
         self._next_drain: dict[KeyT, _Drain | None] = dict.fromkeys(keys)
         self._periodic_failures = dict.fromkeys(keys, 0)
         self._lost_deliveries = dict.fromkeys(keys, 0)
@@ -175,12 +177,32 @@ class AsyncBatchEngine[KeyT, PayloadT]:
     ) -> None:
         if key not in self._queues:
             raise KeyError(key)
-        await self._capacity.acquire()
+        self._arriving[key] += 1
         try:
-            self._queues[key].append(_Pending(payload, delivery, span_context, monotonic()))
-        except BaseException:
-            self._capacity.release()
-            raise
+            await self._capacity.acquire()
+            try:
+                self._queues[key].append(_Pending(payload, delivery, span_context, monotonic()))
+            except BaseException:
+                self._capacity.release()
+                raise
+        finally:
+            self._arriving[key] -= 1
+            self._arrivals[key].set()
+
+    def _pending(self, key: KeyT) -> int:
+        """Work the engine owes this key: queued, or inside :meth:`submit` waiting for capacity."""
+        return len(self._queues[key]) + self._arriving[key]
+
+    async def _next_arrival(self, key: KeyT) -> bool:
+        """Wait for a :meth:`submit` to finish; ``False`` if none did within a tick."""
+        arrival = self._arrivals[key]
+        arrival.clear()
+        try:
+            async with asyncio.timeout(self._policy.flush_interval_s):
+                await arrival.wait()
+        except TimeoutError:
+            return False
+        return True
 
     def _pop(self, key: KeyT) -> list[_Pending[PayloadT]]:
         queue = self._queues[key]
@@ -291,10 +313,12 @@ class AsyncBatchEngine[KeyT, PayloadT]:
             self._report_lost(key, lost)
 
     async def flush(self, key: KeyT) -> bool:
-        """Settle what is queued for ``key`` now; ``False`` if a failure left some of it queued.
+        """Settle ``key``'s work; ``True`` only if nothing at all is pending when it ends.
 
-        Work submitted after this call belongs to a later flush, so a key under constant backlog
-        still returns. Callers do not line up behind a running drain: they share the single drain
+        Callers gate destructive steps on ``True``, so a handler still inside :meth:`submit`
+        counts as pending: the drain waits for it, for up to a tick at a time. Each drain is
+        bounded by the work present when it starts, so a key under constant backlog still returns,
+        with ``False``. Callers do not line up behind a running drain: they share the single drain
         that starts after it, which covers everything they queued, so the number of waiting tasks
         stays bounded however fast deliveries arrive. That drain is cancelled only when its last
         waiter is, leaving its work queued; one cancelled handler stops no one else's write.
@@ -329,8 +353,12 @@ class AsyncBatchEngine[KeyT, PayloadT]:
     async def _drain_locked(self, key: KeyT) -> bool:
         await self._release_expired(key)
         no_progress = 0
-        remaining = len(self._queues[key])
-        while remaining > 0 and self._queues[key]:
+        remaining = self._pending(key)
+        while remaining > 0:
+            if not self._queues[key]:
+                if self._arriving[key] and await self._next_arrival(key):
+                    continue
+                break
             if monotonic() < self._retry_at[key]:
                 return False
             items = self._pop(key)
@@ -400,7 +428,7 @@ class AsyncBatchEngine[KeyT, PayloadT]:
                 if acquired:
                     self._flush_capacity.release()
                 self._report_lost(key, lost)
-        return True
+        return self._pending(key) == 0
 
     async def flush_all(self) -> bool:
         results = await asyncio.gather(*(self.flush(key) for key in self._queues))
@@ -426,7 +454,7 @@ class AsyncBatchEngine[KeyT, PayloadT]:
 
     def snapshot(self) -> object:
         return {
-            "pending": {key: len(queue) for key, queue in self._queues.items()},
+            "pending": {key: self._pending(key) for key in self._queues},
             "batch_sizes": dict(self._batch_sizes),
             "transient_attempts": dict(self._transient_attempts),
             "poison_attempts": dict(self._poison_attempts),
