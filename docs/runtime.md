@@ -82,6 +82,23 @@ purge or maintenance policy. Transient failures retain original order without se
 deterministic failures shrink toward `min_batch_size` and reject only at the poison threshold;
 bounded drain failure retains work for `run_periodic`.
 
+`flush(key)` settles what was queued when it was called, so it returns under constant backlog and
+`True` means that work is settled, not that the queue is empty. Handlers flushing at the batch
+threshold do not line up: they share the one drain waiting behind the running one, so waiting tasks
+stay bounded however fast deliveries arrive. Cancelling a caller stops only its wait; the drain is
+cancelled, leaving its work queued, only when its last waiter is cancelled. `run_periodic` ticks each
+key independently, so a key's backlog or failure cannot delay another key's tail. An exception from
+a periodic flush is logged and counted in `snapshot()["periodic_failures"]`, and the next tick retries.
+
+A delivery that cannot be settled stays with the broker. Delivery tags die with their channel, so an
+ack or nack that failed can never succeed: the engine drops its local copy, returns the capacity,
+settles the rest of the batch, and reports it to `BatchObserver.settled` as `requeue` /
+`delivery_lost`, outside the flush observation, with the total in `snapshot()["lost_deliveries"]`.
+Nothing is lost. The broker redelivers the message, and the row it wrote is rewritten idempotently.
+
+`snapshot()["oldest_pending_age_s"]` is how long each key's oldest queued delivery has waited. Hold
+a service's health to it: a healthy process cannot leave work queued for many flush intervals.
+
 Held deliveries stay unacknowledged during transient backoff, so a long database outage can
 outlast the broker's `consumer_timeout` (RabbitMQ default 30 minutes) and close the channel.
 Set `BatchPolicy.max_hold_s` below that timeout: a delivery held longer than the bound while its
