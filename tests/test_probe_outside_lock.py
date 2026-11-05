@@ -577,3 +577,43 @@ async def test_live_postgres_connections_carry_tcp_liveness_and_survive_a_long_s
     assert row is not None
     assert row[0] == 200000
     await pg.close()
+
+
+def test_busy_progress_window_is_a_constructor_option() -> None:
+    assert AsyncResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x")).busy_progress_window == 120.0
+    driver = AsyncResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"), busy_progress_window=900.0, max_connection_pool_size=1)
+    assert driver.busy_progress_window == 900.0
+    assert "busy_progress_window" not in driver.driver_kwargs
+    with pytest.raises(ValueError, match="positive"):
+        AsyncResilientNeo4jDriver("bolt://localhost:7687", ("neo4j", "x"), busy_progress_window=0)
+
+
+async def _fill_pool_and_probe(window: float, hold_for: float = 4.0) -> bool:
+    """Hold every Bolt connection past ``window`` with no session finishing; report whether the driver survived."""
+    driver = _live_driver(busy_progress_window=window)
+    raw = await driver.get_connection()
+    release = asyncio.Event()
+
+    async def hold() -> None:
+        async with driver.session(database="neo4j") as session:
+            await session.run("RETURN 1")
+            await release.wait()
+
+    holders = [asyncio.create_task(hold()) for _ in range(2)]  # fills the 2-connection pool
+    await asyncio.sleep(hold_for)  # sessions run for hold_for seconds with none finishing
+    survived = True
+    for _ in range(driver.unhealthy_threshold + 2):
+        await asyncio.sleep(0.3)
+        survived = survived and await driver.get_connection() is raw
+    release.set()
+    await asyncio.gather(*holders)
+    await driver.close()
+    return survived
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _URI, reason="NEO4J_URI not set")
+@pytest.mark.asyncio
+async def test_live_neo4j_long_sessions_survive_only_with_a_wide_enough_window() -> None:
+    assert await _fill_pool_and_probe(window=60.0) is True  # window wider than the sessions: healthy long sessions kept
+    assert await _fill_pool_and_probe(window=1.0) is False  # window shorter than the sessions: driver replaced (the reviewed case)

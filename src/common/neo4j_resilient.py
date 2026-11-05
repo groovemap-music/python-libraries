@@ -127,7 +127,13 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
     _last_session_activity_at = 0.0
     busy_progress_window = 120.0
 
-    def __init__(self, uri: str, auth: tuple[str, str], max_retries: int = 5, **driver_kwargs: Any):
+    def __init__(self, uri: str, auth: tuple[str, str], max_retries: int = 5, busy_progress_window: float = 120.0, **driver_kwargs: Any):
+        """``busy_progress_window``: seconds a fully lent-out pool may go without a session completing and still count as busy.
+
+        Raise it when a service legitimately runs ``max_connection_pool_size`` sessions at once, all longer than this.
+        """
+        if busy_progress_window <= 0:
+            raise ValueError("busy_progress_window must be positive")
         # Neo4j driver configuration
         self.uri = uri
         self.auth = auth
@@ -169,7 +175,7 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
         # connection is waiting its turn behind real work, not talking to a hung peer.
         self._open_sessions = 0
         self._last_session_activity_at = time.monotonic()
-        self.busy_progress_window = 120.0
+        self.busy_progress_window = busy_progress_window
 
     def _probe_timeout_is_busy(self, connection: Any) -> bool:  # noqa: ARG002
         """Busy only if every Bolt connection is lent out AND sessions are still completing successfully.
