@@ -1,19 +1,12 @@
 """Backoff for per-message consumers that requeue on a database outage.
 
-Per-message consumers handle "the database is down" by
-``nack(requeue=True)``. Their main queues are quorum queues declared with
-``x-delivery-limit: 20``, so every redelivery spends part of a FIXED budget with
-no time dimension: with no pause between cycles a message is redelivered every
-few seconds and reaches 20 deliveries in ~3 minutes, at which point RabbitMQ
-dead-letters a perfectly valid record. A sustained outage therefore drains the
-head of the queue into the DLQ — silent data loss from a routine maintenance
-window.
+Per-message consumers handle "the database is down" by ``nack(requeue=True)``. With no pause, a
+message comes straight back and fails again hundreds of times a second for as long as the outage
+lasts: RabbitMQ 4.3.5 and 4.4.0 do not spend ``x-delivery-limit`` on a nack, so the broker never
+stops it. This holds the delivery for a growing delay before each nack.
 
-The batch-mode consumers dodged this by moving retry state out of the broker and
-into process memory (deque + backoff). The per-message consumers keep retry state
-in the broker, so the only lever is to slow the treadmill down: hold the delivery
-for a growing delay before nacking, so 20 deliveries span an outage-sized window
-instead of a coffee break.
+What ends a message that keeps failing is ``common.delivery.DEFAULT_MAX_REQUEUES``, read from the
+broker's ``x-acquired-count``. At the 60 s cap here, that budget lasts about 8.3 hours.
 """
 
 import asyncio
@@ -25,8 +18,7 @@ logger = structlog.get_logger(__name__)
 
 # Delay applied before the FIRST requeue of an outage, in seconds.
 DEFAULT_INITIAL_DELAY = 2.0
-# Ceiling for the per-redelivery delay, in seconds. With x-delivery-limit=20 a
-# capped delay of 60s buys ~20 minutes of outage tolerance per message.
+# Ceiling for the per-redelivery delay, in seconds.
 DEFAULT_MAX_DELAY = 60.0
 
 
@@ -71,9 +63,8 @@ class OutageBackoff:
     async def wait(self) -> float:
         """Count a transient failure and sleep for the resulting delay.
 
-        Call this immediately BEFORE ``message.nack(requeue=True)`` so the
-        redelivery that follows costs wall-clock time rather than just another
-        slot of the quorum queue's delivery budget.
+        Call this immediately BEFORE ``message.nack(requeue=True)`` so the redelivery that
+        follows costs wall-clock time. A nack spends none of the queue's ``x-delivery-limit``.
         """
         delay = self.next_delay()
         logger.warning(

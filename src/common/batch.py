@@ -11,7 +11,7 @@ from functools import partial
 from time import monotonic, perf_counter
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
-from common.delivery import Delivery, DeliveryObserver, DeliveryResult, FailureClassifier, FailureKind, Settlement
+from common.delivery import Delivery, DeliveryObserver, DeliveryResult, FailureClassifier, FailureKind, Settlement, requeue_or_dead_letter
 
 
 if TYPE_CHECKING:
@@ -55,8 +55,15 @@ class BatchPolicy:
     # delivery is returned with nack(requeue=True) instead of being held until the broker closes
     # the channel. None keeps the historical unbounded hold.
     max_hold_s: float | None = None
+    # How many times a held delivery may go back to the broker before it is dead-lettered instead,
+    # which nothing else does: RabbitMQ does not spend x-delivery-limit on nack(requeue=True). The
+    # outage survived is this times max_hold_s, so set the two together. It needs a delivery that
+    # exposes the broker's ``headers``. None keeps requeueing without a bound.
+    max_requeues: int | None = None
 
     def __post_init__(self) -> None:
+        if self.max_requeues is not None and self.max_requeues < 1:
+            raise ValueError("max_requeues must be a positive integer or None")
         positive = (
             self.batch_size,
             self.flush_interval_s,
@@ -165,6 +172,7 @@ class AsyncBatchEngine[KeyT, PayloadT]:
         self._next_drain: dict[KeyT, _Drain | None] = dict.fromkeys(keys)
         self._periodic_failures = dict.fromkeys(keys, 0)
         self._lost_deliveries = dict.fromkeys(keys, 0)
+        self._warned_headerless = False
         self._shutdown = asyncio.Event()
 
     async def submit(
@@ -177,6 +185,9 @@ class AsyncBatchEngine[KeyT, PayloadT]:
     ) -> None:
         if key not in self._queues:
             raise KeyError(key)
+        if self._policy.max_requeues is not None and not self._warned_headerless and not hasattr(delivery, "headers"):
+            self._warned_headerless = True
+            logger.warning(f"⚠️ {key} deliveries expose no broker headers, so max_requeues={self._policy.max_requeues} can never be reached")
         self._arriving[key] += 1
         try:
             await self._capacity.acquire()
@@ -280,8 +291,9 @@ class AsyncBatchEngine[KeyT, PayloadT]:
         """Return deliveries held past ``max_hold_s`` during transient backoff to the broker.
 
         ``nack(requeue=True)`` loses nothing: the broker redelivers the message and the consumer
-        submits it again. Only the longest-held prefix is released, so surviving items keep their
-        order. A failed nack means the channel is gone, and the broker redelivers those too.
+        submits it again, until ``max_requeues`` sends it to the dead-letter queue. Only the
+        longest-held prefix is released, so surviving items keep their order. A failed nack means
+        the channel is gone, and the broker redelivers those too.
         """
         limit = self._policy.max_hold_s
         if limit is None or self._transient_attempts[key] == 0:
@@ -293,7 +305,7 @@ class AsyncBatchEngine[KeyT, PayloadT]:
             while queue and now - queue[0].received_at >= limit:
                 item = queue.popleft()
                 try:
-                    await item.delivery.nack(requeue=True)
+                    requeued = await requeue_or_dead_letter(item.delivery, max_requeues=self._policy.max_requeues)
                 except Exception as error:
                     self._capacity.release()
                     lost.append((item, error))
@@ -305,7 +317,9 @@ class AsyncBatchEngine[KeyT, PayloadT]:
                 with contextlib.suppress(Exception):
                     self._observer.settled(
                         entity=str(key),
-                        result=DeliveryResult(Settlement.REQUEUE, "held_timeout"),
+                        result=DeliveryResult(Settlement.REQUEUE, "held_timeout")
+                        if requeued
+                        else DeliveryResult(Settlement.REJECT, "redelivery_exhausted"),
                         duration_s=now - item.received_at,
                         span=None,
                     )
