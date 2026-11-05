@@ -172,7 +172,7 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
         self.busy_progress_window = 120.0
 
     def _probe_timeout_is_busy(self, connection: Any) -> bool:  # noqa: ARG002
-        """Busy only if every Bolt connection is lent out AND sessions are still starting or finishing.
+        """Busy only if every Bolt connection is lent out AND sessions are still completing successfully.
 
         A hung peer freezes its borrowers too, so activity stops; once nothing has started or finished for
         ``busy_progress_window`` seconds, saturation no longer explains an unanswered probe.
@@ -207,13 +207,15 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
             with tracing.db_span("neo4j", "session"):
                 driver = await self.get_connection()
                 self._open_sessions += 1
-                self._last_session_activity_at = time.monotonic()
                 try:
                     async with driver.session(**kwargs) as session:
                         yield session
+                    # Reached only when the block completed: that is the evidence the server answered. Opening a
+                    # session, or ending one with ServiceUnavailable, SessionExpired or an acquisition timeout,
+                    # is not progress.
+                    self._last_session_activity_at = time.monotonic()
                 finally:
                     self._open_sessions -= 1
-                    self._last_session_activity_at = time.monotonic()
         except (ServiceUnavailable, SessionExpired) as exc:
             self.note_borrower_error()
             error_type = runtime_metrics.error_type_of(exc)

@@ -40,6 +40,30 @@ logger = logging.getLogger(__name__)
 PERMANENT_SQLSTATE_CLASSES = frozenset({"54"})
 
 
+# TCP liveness defaults for every connection this module opens. A peer that vanished mid-statement (host down, route
+# lost, NAT entry dropped) never closes the socket, so a connection reading its reply waits forever. Kernel keepalives
+# make the socket fail after roughly idle + interval * count = 60s of silence, and ``tcp_user_timeout`` bounds how
+# long sent-but-unacknowledged data may linger. Neither limits how long a statement may RUN: a healthy server
+# acknowledges keepalives, so a long loader batch or analytics query completes with all its results.
+LIVENESS_DEFAULTS: dict[str, int] = {
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+    "tcp_user_timeout": 90_000,  # milliseconds
+}
+
+
+def with_liveness_defaults(params: dict[str, Any]) -> dict[str, Any]:
+    """Return ``params`` plus the TCP liveness defaults; anything the caller set (key or conninfo string) wins."""
+    conninfo = str(params.get("conninfo") or "")
+    merged = dict(params)
+    for key, value in LIVENESS_DEFAULTS.items():
+        if key not in merged and key not in conninfo:
+            merged[key] = value
+    return merged
+
+
 def is_permanent_operational_error(error: BaseException) -> bool:
     """True for an ``OperationalError`` whose SQLSTATE class is known to be caused by the data.
 
@@ -120,7 +144,7 @@ class AsyncResilientPostgreSQL(AsyncResilientConnection[Any]):
     async def _create_connection(self) -> Any:
         """Create a new async PostgreSQL connection."""
         logger.info("🐘 Creating new async PostgreSQL connection")
-        conn = await psycopg.AsyncConnection.connect(**self.connection_params)
+        conn = await psycopg.AsyncConnection.connect(**with_liveness_defaults(self.connection_params))
         # connect() returning means a real backend is live. If set_autocommit
         # raises, close it before re-raising rather than orphaning it to
         # unreliable/delayed GC.
@@ -273,7 +297,7 @@ class AsyncPostgreSQLPool:
     async def _raw_create_connection(self) -> psycopg.AsyncConnection[Any]:
         """Open and validate a new async PostgreSQL connection (no breaker wrapping)."""
         logger.info("🐘 Creating new async PostgreSQL connection")
-        conn = await psycopg.AsyncConnection.connect(**self.connection_params)
+        conn = await psycopg.AsyncConnection.connect(**with_liveness_defaults(self.connection_params))
         # connect() returning means a real backend is live. If set_autocommit
         # or the SELECT 1 probe raises, close it before re-raising — otherwise
         # the connection is orphaned and only reclaimed by unreliable/delayed
