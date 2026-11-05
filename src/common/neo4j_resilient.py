@@ -127,9 +127,7 @@ class AsyncResilientNeo4jDriver(AsyncResilientConnection[Any]):
     _last_session_activity_at = 0.0
     busy_progress_window = 120.0
 
-    def __init__(
-        self, uri: str, auth: tuple[str, str], max_retries: int = 5, busy_progress_window: float = 120.0, **driver_kwargs: Any
-    ):
+    def __init__(self, uri: str, auth: tuple[str, str], max_retries: int = 5, busy_progress_window: float = 120.0, **driver_kwargs: Any):
         """``busy_progress_window``: seconds a fully lent-out pool may go without a session completing and still count as busy.
 
         Raise it when a service legitimately runs ``max_connection_pool_size`` sessions at once, all longer than this.
