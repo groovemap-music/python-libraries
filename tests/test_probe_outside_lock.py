@@ -542,3 +542,38 @@ async def test_live_neo4j_failed_session_is_not_progress_but_completed_one_is() 
         assert (await result.single())["n"] == 1
     assert time.monotonic() - driver._last_session_activity_at < 5.0
     await driver.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _PG_HOST, reason="POSTGRES_HOST not set")
+@pytest.mark.asyncio
+async def test_live_postgres_connections_carry_tcp_liveness_and_survive_a_long_statement() -> None:
+    import socket
+
+    from common.postgres_resilient import AsyncResilientPostgreSQL
+
+    params = {
+        "host": _PG_HOST,
+        "port": int(os.environ.get("POSTGRES_PORT", "5432")),
+        "user": os.environ.get("POSTGRES_USER", "u"),
+        "password": os.environ.get("POSTGRES_PASSWORD", "pw"),
+        "dbname": os.environ.get("POSTGRES_DB", "d"),
+    }
+    pg = AsyncResilientPostgreSQL(params)
+    conn = await pg.get_connection()
+    sock = socket.socket(fileno=os.dup(conn.pgconn.socket))
+    try:
+        assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) != 0  # macOS reports the flag bit, not 1
+        idle_opt = getattr(socket, "TCP_KEEPIDLE", getattr(socket, "TCP_KEEPALIVE", None))
+        assert idle_opt is not None
+        assert sock.getsockopt(socket.IPPROTO_TCP, idle_opt) == 30
+        if hasattr(socket, "TCP_USER_TIMEOUT"):
+            assert sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT) == 90_000
+    finally:
+        sock.detach()
+    async with conn.cursor() as cur:  # a statement far longer than the keepalive window is untouched: all rows return
+        await cur.execute("SELECT count(*), pg_sleep(3) FROM generate_series(1, 200000)")
+        row = await cur.fetchone()
+    assert row is not None
+    assert row[0] == 200000
+    await pg.close()

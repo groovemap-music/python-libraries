@@ -10,7 +10,13 @@ from psycopg.errors import InterfaceError, OperationalError
 
 from common.db_resilience import CircuitState, DatabaseUnavailableError
 from common.delivery import FailureKind
-from common.postgres_resilient import AsyncPostgreSQLPool, AsyncResilientPostgreSQL, PostgreSQLFailureClassifier, is_permanent_operational_error
+from common.postgres_resilient import (
+    AsyncPostgreSQLPool,
+    AsyncResilientPostgreSQL,
+    PostgreSQLFailureClassifier,
+    is_permanent_operational_error,
+    with_liveness_defaults,
+)
 
 
 class TestAsyncResilientPostgreSQL:
@@ -60,7 +66,7 @@ class TestAsyncResilientPostgreSQL:
         conn = await async_conn._create_connection()
 
         assert conn == mock_async_connection
-        mock_connect.assert_called_once_with(**connection_params)
+        mock_connect.assert_called_once_with(**with_liveness_defaults(connection_params))
         mock_async_connection.set_autocommit.assert_called_once_with(True)
 
     @pytest.mark.asyncio
@@ -287,7 +293,7 @@ class TestAsyncPostgreSQLPool:
         conn = await pool._create_connection()
 
         assert conn == mock_async_connection
-        mock_connect.assert_called_with(**connection_params)
+        mock_connect.assert_called_with(**with_liveness_defaults(connection_params))
         mock_async_connection.set_autocommit.assert_called_once_with(True)
 
         # Cleanup
@@ -1600,3 +1606,33 @@ class TestPostgreSQLFailureClassification:
         conn.close.assert_awaited()
         assert pool.active_connections == 0
         await pool.close()
+
+
+class TestLivenessDefaults:
+    def test_defaults_are_added(self) -> None:
+        from common.postgres_resilient import LIVENESS_DEFAULTS, with_liveness_defaults
+
+        merged = with_liveness_defaults({"host": "h"})
+        assert merged == {"host": "h", **LIVENESS_DEFAULTS}
+        assert merged["keepalives_idle"] + merged["keepalives_interval"] * merged["keepalives_count"] <= 60
+
+    def test_caller_values_win(self) -> None:
+        from common.postgres_resilient import with_liveness_defaults
+
+        assert with_liveness_defaults({"host": "h", "keepalives_idle": 5, "tcp_user_timeout": 0})["keepalives_idle"] == 5
+        assert with_liveness_defaults({"host": "h", "tcp_user_timeout": 0})["tcp_user_timeout"] == 0
+
+    def test_conninfo_settings_are_not_overridden(self) -> None:
+        from common.postgres_resilient import with_liveness_defaults
+
+        merged = with_liveness_defaults({"conninfo": "postgresql://u@h/d?tcp_user_timeout=1000&keepalives_idle=7"})
+        assert "tcp_user_timeout" not in merged
+        assert "keepalives_idle" not in merged
+        assert merged["keepalives_count"] == 3
+
+    def test_input_is_not_mutated(self) -> None:
+        from common.postgres_resilient import with_liveness_defaults
+
+        params = {"host": "h"}
+        with_liveness_defaults(params)
+        assert params == {"host": "h"}
