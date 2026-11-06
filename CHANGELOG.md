@@ -7,6 +7,29 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Fix `AsyncBatchEngine` reporting a key complete while its records were on the broker. Deliveries
+  returned at `max_hold_s` now count in `flush()` and `snapshot()["pending"]` until they are
+  submitted again, or for `RETURN_WINDOW_S` (30 s) if they never are. Before this, the drain that
+  released a tail returned `True`, so `extraction_complete` could land with its records unwritten,
+  and the sql loader's stale-row purge could run over them. `snapshot()` gains `returning`.
+
+- `BatchPolicy.max_hold_s` now bounds every wait in the engine, not only a key in transient backoff.
+  The hold is counted from `submit()`. A delivery waiting for capacity goes back to the broker from
+  `submit()` once the hold passes, and a working key is checked before every batch, sparing the
+  batch it writes next. Before this, at 4000 unacknowledged deliveries against `max_pending` 1000, an
+  outage kept the last of them unsettled for about 6000 s, and the broker cancelled the consumer at
+  1800 s. Services should set `max_pending` to at least their total prefetch: the engine warns once
+  if a delivery waits for capacity, and below it deliveries spend `max_requeues` waiting.
+
+- Bound hung batch writes. New `BatchPolicy.max_write_s` (default 120 s, `None` for the old
+  unbounded write) ends a sink write that stops answering and counts it as a transient failure, so
+  `max_hold_s` can act on a frozen store. A write that ignores cancellation for
+  `WRITE_CANCEL_GRACE_S` (5 s) is left to finish on its own and counted in
+  `snapshot()["abandoned_writes"]`. This is on by default: a service inherits the bound when it
+  takes this release, and a write that legitimately runs past 120 s is retried at half the batch
+  size. Services that check `max_hold_s` against the broker's `consumer_timeout` should add
+  `2 × (max_write_s + WRITE_CANCEL_GRACE_S)` to that budget.
+
 - Add `common.person_names.strip_person_name`: the one rule for padding on a Person name, used
   by both `discogs-graph-enricher` (`person_credit_rows`) and `discogs-sql-loader` (`_credits`) so
   Neo4j `Person.name` and Postgres `graph.person.name` key a person identically. It strips Unicode

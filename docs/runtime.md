@@ -104,10 +104,70 @@ a service's health to it: a healthy process cannot leave work queued for many fl
 
 Held deliveries stay unacknowledged during transient backoff, so a long database outage can
 outlast the broker's `consumer_timeout` (RabbitMQ default 30 minutes) and close the channel.
-Set `BatchPolicy.max_hold_s` below that timeout: a delivery held longer than the bound while its
-key is in transient backoff is returned with `nack(requeue=True)` (never acked, never lost) and
-reported to `BatchObserver.settled` as `requeue` / `held_timeout`. The default `None` keeps the
-unbounded hold, so existing consumers are unchanged until they opt in.
+Set `BatchPolicy.max_hold_s` below that timeout: a delivery held longer than the bound is returned
+with `nack(requeue=True)` (never acked, never lost) and reported to `BatchObserver.settled` as
+`requeue` / `held_timeout`. The default `None` keeps the unbounded hold, so existing consumers are
+unchanged until they opt in.
+
+The hold is counted from `submit()`, because the broker's timer is already running, and it covers
+every place a delivery can wait:
+
+- **Waiting for capacity.** A delivery past `max_pending` is not in any queue, so no drain can reach
+  it, and during an outage a slot frees only when a hold ends. Each one would wait out the holds
+  ahead of it. `submit()` returns it to the broker itself once the hold passes.
+- **Queued on a key in backoff.** Nothing is being written, so everything past the hold goes back.
+- **Queued on a key that is working.** The hold is checked before every batch of a drain, so a slow
+  store cannot hold a delivery for as long as the drain runs. The batch about to be written is
+  spared, or a store slower than the hold would return each record just before writing it and
+  nothing would ever land. A delivery in that batch can run past the hold by the write and the flush
+  slot it waits for, which the bound below allows for.
+
+Set `max_pending` to at least the total prefetch of every channel feeding the engine, which is
+prefetch × 4 for a service with a channel per type. The bound holds without it, and it is not what
+stops a delivery passing `consumer_timeout`, but every delivery past capacity is then returned
+without being offered to the store, and each return spends one of its `max_requeues`. A delivery
+that waits for capacity logs one warning per engine, so this shows up the first time it happens.
+
+A returned delivery is still an unwritten record, so it stays in `flush()` and
+`snapshot()["pending"]` until a handler submits it again, and `snapshot()["returning"]` shows how
+many are out. This has to outlive the drain that released them. A caller waiting on that drain
+gets the next one, which starts as the release ends, and a gate that read an empty queue then
+would land its end-of-type marker with the records on the broker. Each submit pays off one
+return, because a nacked message goes back ahead of the messages behind it. After `RETURN_WINDOW_S`
+(30 s) the count clears, so a redelivery that a handler discards cannot block a marker forever. One
+narrow case gets past this: if a nack fails because the channel is dead and recovery takes over
+30 s, the count clears with the record still on the broker. A
+delivery sent to the dead-letter queue is not expected back and does not count, the same as a
+rejected poison record.
+
+The hold only acts between writes, so a store that hangs needs its own bound. A paused server
+accepts bytes and answers nothing, so a write raises nothing and no driver read timeout applies.
+`BatchPolicy.max_write_s` (default `DEFAULT_MAX_WRITE_S`, 120 s) ends the write and counts it as a
+transient failure, whatever the classifier says about the `BatchWriteTimeoutError`. A hang never
+reaches `max_poison_retries`.
+
+The write runs in its own task and gets `WRITE_CANCEL_GRACE_S` (5 s) to stop once cancelled,
+because a timeout inside the write would depend on cancellation finishing. Measured under
+`docker pause`, one cancel frees a Neo4j write at once. A PostgreSQL write was still in its rollback
+45 s later, and stayed there until the server came back. A write that outlives the grace is left
+to finish on its own and counted in `snapshot()["abandoned_writes"]`. Its batch may be written
+twice, which sinks already allow for because every delivery is at least once. The connection pool
+bounds how many such writes can pile up.
+
+A delivery is settled or back on the broker within `max_hold_s + 2 × (max_write_s +
+WRITE_CANCEL_GRACE_S) + flush_interval_s`: one write that started just inside the hold, and one
+other key's write it waited behind for a flush slot. That second term is for 4 keys and 2 slots, so
+count one more write for each further round of keys a flush slot has to serve. At 1500 s, 120 s, 5 s
+and 5 s that is 1755 s, inside RabbitMQ's 1800 s. That figure is for a hung store: a store that is
+slow but still answering can reach about 1950 s in a corner that needs every write near 120 s, on
+every key, after batches have halved, and the result is the old uncounted consumer cancel with
+nothing lost. The event loop has to be running: a blocked loop
+stops every timer here, and the broker's keeps going.
+
+Keep `max_write_s` above the longest legitimate write. On lux during a Discogs load the longest
+running Neo4j transaction in five samples was 0.47 s, and the longest gap between release flushes in
+the last hour of it was 4.3 s. A write that does run past the bound is retried at half the batch
+size, so a slow store still makes progress.
 
 ### What ends a message that keeps failing
 

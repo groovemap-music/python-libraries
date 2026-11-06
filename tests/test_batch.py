@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+import common.batch as batch_module
 from common.batch import AsyncBatchEngine, BatchItemResult, BatchPolicy
 from common.delivery import FailureKind, Settlement
 
@@ -431,11 +432,13 @@ async def test_max_hold_requeues_deliveries_held_past_the_bound_during_outage() 
     assert all(delivery.calls == [] for delivery in deliveries)
 
     await asyncio.sleep(0.06)
-    assert await batch.flush("release") is True
+    # The queue is empty, but the records are unwritten on the broker, so the drain is not complete.
+    assert await batch.flush("release") is False
 
     # Nothing is lost or acked: every delivery goes back to the broker, in order, once.
     assert [delivery.calls for delivery in deliveries] == [["nack:True"]] * 3
-    assert batch.snapshot()["pending"]["release"] == 0  # type: ignore[index]
+    assert batch.snapshot()["pending"]["release"] == 3  # type: ignore[index]
+    assert batch.snapshot()["returning"]["release"] == 3  # type: ignore[index]
     outcomes = [call.kwargs["result"] for call in observer.settled.call_args_list]
     assert [(r.settlement, r.outcome) for r in outcomes] == [(Settlement.REQUEUE, "held_timeout")] * 3
     # Capacity is returned: a full max_pending of new work is accepted.
@@ -470,12 +473,317 @@ async def test_max_hold_leaves_a_delivery_to_the_broker_when_requeue_fails() -> 
     await batch.flush("release")
     await asyncio.sleep(0.02)
 
-    assert await batch.flush("release") is True
+    assert await batch.flush("release") is False
 
     assert failing.calls == ["nack:True"]
     assert survivor.calls == ["nack:True"]
-    assert batch.snapshot()["pending"]["release"] == 0  # type: ignore[index]
+    # The broker holds the lost one too, so it comes back like the one that was nacked.
+    assert batch.snapshot()["pending"]["release"] == 2  # type: ignore[index]
     assert batch.snapshot()["lost_deliveries"]["release"] == 1  # type: ignore[index]
+
+
+async def held_past_the_bound(batch: AsyncBatchEngine[str, int], *deliveries: StrictDelivery) -> None:
+    """Fail one write with ``deliveries`` queued, then let them age past ``max_hold_s``."""
+    for value, delivery in enumerate(deliveries):
+        await batch.submit("release", value, delivery)
+    assert await batch.flush("release") is False
+    await asyncio.sleep(0.02)
+
+
+@pytest.mark.asyncio
+async def test_returned_deliveries_stay_pending_past_the_drain_that_released_them() -> None:
+    """The next drain can start the moment this one ends, with the records still on the wire."""
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    batch = engine(sink, max_hold_s=0.01, backoff_initial_s=0.001, backoff_max_s=0.001)
+    await held_past_the_bound(batch, StrictDelivery(), StrictDelivery())
+
+    assert await batch.flush("release") is False, "the drain that released them"
+    assert await batch.flush("release") is False, "the drain behind it, with an empty queue"
+
+    # Redelivered, one at a time, and the store is back: only the last write completes the key.
+    sink.write.side_effect = lambda _key, payloads: [BatchItemResult(Settlement.ACK, "processed") for _ in payloads]
+    await asyncio.sleep(0.01)
+    await batch.submit("release", 0, StrictDelivery())
+    assert await batch.flush("release") is False, "one record is back, the other is still out"
+    await batch.submit("release", 1, StrictDelivery())
+    assert await batch.flush("release") is True
+    assert batch.snapshot()["returning"]["release"] == 0  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_a_return_that_never_arrives_stops_counting_after_the_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A handler can discard a redelivery, and a marker must not wait on it forever."""
+    monkeypatch.setattr(batch_module, "RETURN_WINDOW_S", 0.02)
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    batch = engine(sink, max_hold_s=0.01)
+    await held_past_the_bound(batch, StrictDelivery())
+
+    assert await batch.flush("release") is False
+    await asyncio.sleep(0.03)
+
+    assert await batch.flush("release") is True
+    assert batch.snapshot()["returning"]["release"] == 0  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_a_dead_lettered_delivery_is_not_expected_back() -> None:
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    batch = engine(sink, max_hold_s=0.01, max_requeues=1)
+    spent = StrictDelivery()
+    spent.headers = {"x-acquired-count": 1}  # type: ignore[attr-defined]
+    await held_past_the_bound(batch, spent)
+
+    assert await batch.flush("release") is True
+
+    assert spent.calls == ["nack:False"]
+    assert batch.snapshot()["returning"]["release"] == 0  # type: ignore[index]
+
+
+def ok(_key: str, payloads: list[int]) -> list[BatchItemResult]:
+    return [BatchItemResult(Settlement.ACK, "processed") for _ in payloads]
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_past_capacity_goes_back_without_waiting_for_a_slot() -> None:
+    """The broker's timer runs while it waits. Nothing frees a slot during an outage but the hold."""
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    observer = Observer()
+    batch = engine(sink, observer, max_pending=1, max_hold_s=0.05)
+    held, waiting = StrictDelivery(), StrictDelivery()
+    await batch.submit("release", 1, held)
+    assert await batch.flush("release") is False
+
+    await asyncio.wait_for(batch.submit("release", 2, waiting), timeout=1)
+
+    assert waiting.calls == ["nack:True"], "returned from submit, with the slot still taken"
+    assert held.calls == []
+    assert batch.snapshot()["returning"]["release"] == 1  # type: ignore[index]
+    assert observer.settled.call_args.kwargs["result"].outcome == "held_timeout"
+    assert await asyncio.wait_for(batch.flush("release"), timeout=1) is False, "it is still owed"
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_past_capacity_spends_its_budget_and_a_lost_one_is_accounted_for() -> None:
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    batch = engine(sink, max_pending=1, max_hold_s=0.01, max_requeues=1)
+    await batch.submit("release", 1, StrictDelivery())
+    spent = StrictDelivery()
+    spent.headers = {"x-acquired-count": 1}  # type: ignore[attr-defined]
+    await batch.submit("release", 2, spent)
+    assert spent.calls == ["nack:False"]
+    assert batch.snapshot()["returning"]["release"] == 0  # type: ignore[index]
+
+    gone = StrictDelivery(nack_error=RuntimeError("channel closed"))
+    await batch.submit("release", 3, gone)
+    assert batch.snapshot()["lost_deliveries"]["release"] == 1  # type: ignore[index]
+    assert batch.snapshot()["returning"]["release"] == 1  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_handler_waiting_for_capacity_leaves_its_delivery_to_the_broker() -> None:
+    sink = AsyncMock()
+    batch = engine(sink, max_pending=1, max_hold_s=30.0)
+    await batch.submit("release", 1, StrictDelivery())
+    waiting = StrictDelivery()
+    submit = asyncio.create_task(batch.submit("release", 2, waiting))
+    await asyncio.sleep(0)
+
+    submit.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await submit
+
+    assert waiting.calls == []
+    assert batch.snapshot()["pending"]["release"] == 1  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_time_waiting_for_capacity_counts_toward_the_hold() -> None:
+    """Otherwise a delivery that gets its slot late starts a second hold on the broker's one timer."""
+    gate = asyncio.Event()
+
+    async def write(_key: str, payloads: list[int]) -> list[BatchItemResult]:
+        await gate.wait()
+        return ok(_key, payloads)
+
+    sink = Mock(write=write)
+    batch = engine(sink, max_pending=1, max_hold_s=1.0)
+    await batch.submit("release", 1, StrictDelivery())
+    drain = asyncio.create_task(batch.flush("release"))
+    await asyncio.sleep(0.01)
+    submit = asyncio.create_task(batch.submit("release", 2, StrictDelivery()))
+    await asyncio.sleep(0.05)
+
+    gate.set()
+    await asyncio.wait_for(asyncio.gather(drain, submit), timeout=1)
+
+    assert batch.snapshot()["oldest_pending_age_s"]["release"] >= 0.05  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_waiting_for_capacity_warns_once_that_max_pending_is_too_small(caplog: pytest.LogCaptureFixture) -> None:
+    batch = engine(AsyncMock(), max_pending=1, max_hold_s=0.01)
+    batch._flush_capacity = asyncio.Semaphore(0)
+    await batch.submit("release", 1, StrictDelivery())
+    with caplog.at_level("WARNING", logger="common.batch"):
+        await batch.submit("release", 2, StrictDelivery())
+        await batch.submit("release", 3, StrictDelivery())
+
+    assert sum("max_pending=1" in message for message in caplog.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_working_key_returns_what_it_cannot_reach_within_the_hold_and_writes_the_rest() -> None:
+    """A store slower than the hold: writes succeed, so no backoff ever opens the old gate."""
+    written: list[int] = []
+
+    async def write(_key: str, payloads: list[int]) -> list[BatchItemResult]:
+        await asyncio.sleep(0.05)
+        written.extend(payloads)
+        return ok(_key, payloads)
+
+    batch = engine(Mock(write=write), batch_size=2, max_hold_s=0.03)
+    deliveries = [StrictDelivery() for _ in range(6)]
+    for value, delivery in enumerate(deliveries):
+        await batch.submit("release", value, delivery)
+
+    assert await batch.flush("release") is False
+
+    assert written == [0, 1, 2, 3], "the batch about to be written is spared every time, so it makes progress"
+    assert [delivery.calls for delivery in deliveries[:4]] == [["ack"]] * 4
+    assert [delivery.calls for delivery in deliveries[4:]] == [["nack:True"]] * 2
+
+
+class HungSink:
+    """A store that stops answering: raises nothing and returns nothing until told to."""
+
+    def __init__(self, *, ignores_cancel: bool = False) -> None:
+        self.ignores_cancel = ignores_cancel
+        self.answer = asyncio.Event()
+        self.started = asyncio.Event()
+        self.cancelled = 0
+        self.hung = True
+
+    async def write(self, _key: str, payloads: list[int]) -> list[BatchItemResult]:
+        if self.hung:
+            self.started.set()
+            while not self.answer.is_set():
+                try:
+                    await self.answer.wait()
+                except asyncio.CancelledError:
+                    self.cancelled += 1
+                    if not self.ignores_cancel:
+                        raise
+        return [BatchItemResult(Settlement.ACK, "processed") for _ in payloads]
+
+
+@pytest.mark.asyncio
+async def test_a_hung_write_behaves_like_a_failed_write() -> None:
+    sink = HungSink()
+    observer = Observer()
+    # The classifier in engine() calls anything but ConnectionError deterministic. A hang is not.
+    batch = engine(sink, observer, max_write_s=0.01, max_hold_s=0.05, backoff_initial_s=0.001, backoff_max_s=0.001, max_poison_retries=1)
+    delivery = StrictDelivery()
+    await batch.submit("release", 1, delivery)
+
+    assert await asyncio.wait_for(batch.flush("release"), timeout=2) is False
+
+    assert sink.cancelled == 1
+    assert delivery.calls == []
+    assert batch.snapshot()["pending"]["release"] == 1  # type: ignore[index]
+    assert batch.snapshot()["transient_attempts"]["release"] == 1  # type: ignore[index]
+    assert observer.retry.call_args.kwargs["kind"] is FailureKind.TRANSIENT
+    # Which is what hands the hold its chance: the same hang now ends in a release.
+    await asyncio.sleep(0.06)
+    assert await asyncio.wait_for(batch.flush("release"), timeout=2) is False
+    assert delivery.calls == ["nack:True"]
+
+
+@pytest.mark.asyncio
+async def test_a_write_that_ignores_cancellation_is_left_behind_and_the_key_moves_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A PostgreSQL rollback on a frozen server outlives the cancel, so the bound cannot wait for it."""
+    monkeypatch.setattr(batch_module, "WRITE_CANCEL_GRACE_S", 0.01)
+    sink = HungSink(ignores_cancel=True)
+    batch = engine(sink, max_write_s=0.01)
+    await batch.submit("release", 1, StrictDelivery())
+
+    assert await asyncio.wait_for(batch.flush("release"), timeout=2) is False
+
+    assert batch.snapshot()["abandoned_writes"]["release"] == 1  # type: ignore[index]
+    sink.answer.set()
+    await asyncio.sleep(0.01)
+    assert batch.snapshot()["abandoned_writes"]["release"] == 0  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_a_write_that_finishes_after_its_cancel_is_still_settled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Its rows are stored, so failing it would only write them again."""
+    monkeypatch.setattr(batch_module, "WRITE_CANCEL_GRACE_S", 0.5)
+    sink = HungSink(ignores_cancel=True)
+    batch = engine(sink, max_write_s=0.01)
+    delivery = StrictDelivery()
+    await batch.submit("release", 1, delivery)
+    flush = asyncio.create_task(batch.flush("release"))
+    await asyncio.wait_for(sink.started.wait(), timeout=1)
+    while sink.cancelled == 0:
+        await asyncio.sleep(0.001)
+
+    sink.answer.set()
+
+    assert await asyncio.wait_for(flush, timeout=2) is True
+    assert delivery.calls == ["ack"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_flush_cancels_its_bounded_write_and_keeps_the_work() -> None:
+    sink = HungSink()
+    batch = engine(sink, max_write_s=30.0)
+    delivery = StrictDelivery()
+    await batch.submit("release", 1, delivery)
+    flush = asyncio.create_task(batch.flush("release"))
+    await asyncio.wait_for(sink.started.wait(), timeout=1)
+
+    flush.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(flush, timeout=2)
+
+    assert sink.cancelled == 1
+    assert delivery.calls == []
+    assert batch.snapshot()["pending"]["release"] == 1  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_max_write_none_keeps_the_unbounded_write() -> None:
+    sink = HungSink()
+    batch = engine(sink, max_write_s=None)
+    await batch.submit("release", 1, StrictDelivery())
+    flush = asyncio.create_task(batch.flush("release"))
+    await asyncio.wait_for(sink.started.wait(), timeout=1)
+    await asyncio.sleep(0.03)
+    assert not flush.done()
+
+    sink.answer.set()
+
+    assert await asyncio.wait_for(flush, timeout=1) is True
+
+
+def test_writes_are_bounded_by_default_and_fit_under_the_consumer_timeout() -> None:
+    """The 1500 s hold the services run with, checked against RabbitMQ's 1800 s."""
+    bounded = policy(max_hold_s=1500.0, flush_interval_s=5.0, max_concurrent_flushes=2)
+    assert bounded.max_write_s == batch_module.DEFAULT_MAX_WRITE_S
+    assert bounded.max_write_s is not None
+    assert bounded.max_hold_s is not None
+    assert bounded.max_hold_s + 2 * (bounded.max_write_s + batch_module.WRITE_CANCEL_GRACE_S) + bounded.flush_interval_s < 1800.0
+
+
+@pytest.mark.parametrize("value", [0, -1, True])
+def test_max_write_must_be_positive(value: object) -> None:
+    with pytest.raises(ValueError, match="max_write_s"):
+        policy(max_write_s=value)
 
 
 @pytest.mark.parametrize("value", [0, -1.0, True])
@@ -564,7 +872,7 @@ async def test_handlers_share_the_next_drain_instead_of_queueing_one_each() -> N
     await asyncio.sleep(0)
 
     # One running drain and one waiting: not a task on the key's lock for every handler.
-    assert len(asyncio.all_tasks()) - len(waiters) == 4  # this test, running, its drain, the next drain
+    assert len(asyncio.all_tasks()) - len(waiters) == 5  # this test, running, its drain, its write, the next drain
 
     release.set()
     assert await running is False  # the next drain's work was still queued when it ended
