@@ -62,10 +62,12 @@ class BatchPolicy:
     backoff_multiplier: float
     max_drain_retries: int
     max_poison_retries: int
-    # Longest a delivery may stay unacknowledged while its key is in transient backoff. Set it
-    # below the broker's consumer_timeout (RabbitMQ default 30 minutes): past the bound the
-    # delivery is returned with nack(requeue=True) instead of being held until the broker closes
-    # the channel. None keeps the historical unbounded hold.
+    # Longest a delivery may wait in the engine, counted from submit(), whether it is queued or still
+    # waiting for capacity. Set it below the broker's consumer_timeout (RabbitMQ default 30 minutes):
+    # past the bound the delivery is returned with nack(requeue=True) instead of being held until
+    # the broker closes the channel. Set max_pending to at least the total prefetch of every
+    # channel feeding this engine, or deliveries spend their max_requeues budget waiting for
+    # capacity. None keeps the historical unbounded hold.
     max_hold_s: float | None = None
     # How many times a held delivery may go back to the broker before it is dead-lettered instead,
     # which nothing else does: RabbitMQ does not spend x-delivery-limit on nack(requeue=True). The
@@ -74,10 +76,11 @@ class BatchPolicy:
     max_requeues: int | None = None
     # Longest one sink write may run. Past it the write is cancelled and counts as a transient
     # failure, which is what lets max_hold_s act on a store that hangs instead of failing. A delivery
-    # is back on the broker within max_hold_s + 2 * (max_write_s + WRITE_CANCEL_GRACE_S) +
+    # is settled or back on the broker within max_hold_s + 2 * (max_write_s + WRITE_CANCEL_GRACE_S) +
     # flush_interval_s: one write that started just inside the hold, and one other key's write it
-    # waited behind for max_concurrent_flushes. Keep that below the broker's consumer_timeout, and
-    # keep this above the longest legitimate write. None keeps the historical unbounded write.
+    # waited behind for a flush slot, which is one write with 4 keys and 2 slots. Keep that below the
+    # broker's consumer_timeout, and keep this above the longest legitimate write. None keeps the
+    # historical unbounded write.
     max_write_s: float | None = DEFAULT_MAX_WRITE_S
 
     def __post_init__(self) -> None:
@@ -201,6 +204,7 @@ class AsyncBatchEngine[KeyT, PayloadT]:
         self._returning_until = dict.fromkeys(keys, 0.0)
         self._abandoned_writes: dict[KeyT, set[asyncio.Future[Any]]] = {key: set() for key in keys}
         self._warned_headerless = False
+        self._warned_capacity = False
         self._shutdown = asyncio.Event()
 
     async def submit(
@@ -218,17 +222,49 @@ class AsyncBatchEngine[KeyT, PayloadT]:
             logger.warning(f"⚠️ {key} deliveries expose no broker headers, so max_requeues={self._policy.max_requeues} can never be reached")
         if self._returning[key] > 0:
             self._returning[key] -= 1
+        # The broker's timer started before this call, so the hold starts here and not at the append.
+        item = _Pending(payload, delivery, span_context, monotonic())
         self._arriving[key] += 1
         try:
-            await self._capacity.acquire()
+            if not await self._capacity_within_hold(key, item):
+                return
             try:
-                self._queues[key].append(_Pending(payload, delivery, span_context, monotonic()))
+                self._queues[key].append(item)
             except BaseException:
                 self._capacity.release()
                 raise
         finally:
             self._arriving[key] -= 1
             self._arrivals[key].set()
+
+    async def _capacity_within_hold(self, key: KeyT, item: _Pending[PayloadT]) -> bool:
+        """Take a capacity slot, or return ``item`` to the broker if none came within ``max_hold_s``.
+
+        A delivery waiting here is not in any queue, so no drain can reach it, and nothing else
+        frees it: slots come back only when other deliveries settle, which during an outage is one
+        hold at a time. Deliveries past ``max_pending`` would each wait out every hold ahead of them.
+        """
+        limit = self._policy.max_hold_s
+        if limit is None:
+            await self._capacity.acquire()
+            return True
+        if self._capacity.locked() and not self._warned_capacity:
+            self._warned_capacity = True
+            logger.warning(
+                f"⚠️ {key} delivery is waiting for capacity, so max_pending={self._policy.max_pending} is below what the broker "
+                "has delivered: set it to at least the total prefetch of every channel, or deliveries spend their requeues waiting"
+            )
+        try:
+            async with asyncio.timeout(limit):
+                await self._capacity.acquire()
+        except TimeoutError:
+            lost: list[tuple[_Pending[PayloadT], Exception]] = []
+            try:
+                await self._return_to_broker(key, item, lost)
+            finally:
+                self._report_lost(key, lost)
+            return False
+        return True
 
     def _pending(self, key: KeyT) -> int:
         """Work the engine owes this key: queued, inside :meth:`submit`, or on its way back from the broker."""
@@ -367,51 +403,64 @@ class AsyncBatchEngine[KeyT, PayloadT]:
         if not write.done():
             logger.warning(f"⚠️ {key} write did not stop within {WRITE_CANCEL_GRACE_S:g} s of being cancelled; leaving it to finish on its own")
 
-    async def _release_expired(self, key: KeyT) -> None:
-        """Return deliveries held past ``max_hold_s`` during transient backoff to the broker.
+    async def _return_to_broker(self, key: KeyT, item: _Pending[PayloadT], lost: list[tuple[_Pending[PayloadT], Exception]]) -> None:
+        """Requeue ``item``, or dead-letter it once ``max_requeues`` is spent.
 
         ``nack(requeue=True)`` loses nothing: the broker redelivers the message and the consumer
-        submits it again, until ``max_requeues`` sends it to the dead-letter queue. Only the
-        longest-held prefix is released, so surviving items keep their order. A failed nack means
-        the channel is gone, and the broker redelivers those too. Each one counts as pending until
-        it is back (see :meth:`_returning_now`), so no drain reports a key complete while its
+        submits it again, until ``max_requeues`` sends it to the dead-letter queue. A failed nack
+        means the channel is gone, and the broker redelivers those too. Each one counts as pending
+        until it is back (see :meth:`_returning_now`), so no drain reports a key complete while its
         records are on the broker. One sent to the dead-letter queue is not coming back and does not
         count, the same as a rejected poison record: that is what a purge veto is for.
         """
-        limit = self._policy.max_hold_s
-        if limit is None or self._transient_attempts[key] == 0:
+        now = monotonic()
+        # Counted before the nack: the redelivery can reach submit() before the nack returns.
+        self._returning[key] = self._returning_now(key) + 1
+        self._returning_until[key] = now + RETURN_WINDOW_S
+        try:
+            requeued = await requeue_or_dead_letter(item.delivery, max_requeues=self._policy.max_requeues)
+        except Exception as error:
+            lost.append((item, error))
             return
+        except BaseException:
+            self._returning[key] = max(0, self._returning[key] - 1)
+            raise
+        if not requeued:
+            self._returning[key] = max(0, self._returning[key] - 1)
+        with contextlib.suppress(Exception):
+            self._observer.settled(
+                entity=str(key),
+                result=DeliveryResult(Settlement.REQUEUE, "held_timeout") if requeued else DeliveryResult(Settlement.REJECT, "redelivery_exhausted"),
+                duration_s=now - item.received_at,
+                span=None,
+            )
+
+    async def _release_expired(self, key: KeyT) -> None:
+        """Return queued deliveries held past ``max_hold_s`` to the broker.
+
+        Only the longest-held prefix is released, so surviving items keep their order. A key in
+        backoff writes nothing, so nothing is spared. A working key spares the batch it writes next:
+        if the store is slower than the hold, returning the oldest records just before writing them
+        would write nothing, and every record would spend its requeues going round. Those behind
+        that batch go back, because the broker's timer does not care that the store is working.
+        """
+        limit = self._policy.max_hold_s
+        if limit is None:
+            return
+        spared = 0 if self._transient_attempts[key] else self._batch_sizes[key]
         queue = self._queues[key]
         now = monotonic()
         lost: list[tuple[_Pending[PayloadT], Exception]] = []
         try:
-            while queue and now - queue[0].received_at >= limit:
-                item = queue.popleft()
-                # Counted before the nack: the redelivery can reach submit() before the nack returns.
-                self._returning[key] = self._returning_now(key) + 1
-                self._returning_until[key] = now + RETURN_WINDOW_S
+            while len(queue) > spared and now - queue[spared].received_at >= limit:
+                item = queue[spared]
+                del queue[spared]
                 try:
-                    requeued = await requeue_or_dead_letter(item.delivery, max_requeues=self._policy.max_requeues)
-                except Exception as error:
-                    self._capacity.release()
-                    lost.append((item, error))
-                    continue
+                    await self._return_to_broker(key, item, lost)
                 except BaseException:
-                    self._returning[key] = max(0, self._returning[key] - 1)
-                    queue.appendleft(item)
+                    queue.insert(spared, item)
                     raise
                 self._capacity.release()
-                if not requeued:
-                    self._returning[key] = max(0, self._returning[key] - 1)
-                with contextlib.suppress(Exception):
-                    self._observer.settled(
-                        entity=str(key),
-                        result=DeliveryResult(Settlement.REQUEUE, "held_timeout")
-                        if requeued
-                        else DeliveryResult(Settlement.REJECT, "redelivery_exhausted"),
-                        duration_s=now - item.received_at,
-                        span=None,
-                    )
         finally:
             self._report_lost(key, lost)
 
@@ -455,10 +504,10 @@ class AsyncBatchEngine[KeyT, PayloadT]:
             return await self._drain_locked(key)
 
     async def _drain_locked(self, key: KeyT) -> bool:
-        await self._release_expired(key)
         no_progress = 0
         remaining = self._pending(key)
         while remaining > 0:
+            await self._release_expired(key)
             if not self._queues[key]:
                 if self._arriving[key] and await self._next_arrival(key):
                     continue

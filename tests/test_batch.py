@@ -542,6 +542,122 @@ async def test_a_dead_lettered_delivery_is_not_expected_back() -> None:
     assert batch.snapshot()["returning"]["release"] == 0  # type: ignore[index]
 
 
+def ok(_key: str, payloads: list[int]) -> list[BatchItemResult]:
+    return [BatchItemResult(Settlement.ACK, "processed") for _ in payloads]
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_past_capacity_goes_back_without_waiting_for_a_slot() -> None:
+    """The broker's timer runs while it waits. Nothing frees a slot during an outage but the hold."""
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    observer = Observer()
+    batch = engine(sink, observer, max_pending=1, max_hold_s=0.05)
+    held, waiting = StrictDelivery(), StrictDelivery()
+    await batch.submit("release", 1, held)
+    assert await batch.flush("release") is False
+
+    await asyncio.wait_for(batch.submit("release", 2, waiting), timeout=1)
+
+    assert waiting.calls == ["nack:True"], "returned from submit, with the slot still taken"
+    assert held.calls == []
+    assert batch.snapshot()["returning"]["release"] == 1  # type: ignore[index]
+    assert observer.settled.call_args.kwargs["result"].outcome == "held_timeout"
+    assert await asyncio.wait_for(batch.flush("release"), timeout=1) is False, "it is still owed"
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_past_capacity_spends_its_budget_and_a_lost_one_is_accounted_for() -> None:
+    sink = AsyncMock()
+    sink.write.side_effect = ConnectionError("down")
+    batch = engine(sink, max_pending=1, max_hold_s=0.01, max_requeues=1)
+    await batch.submit("release", 1, StrictDelivery())
+    spent = StrictDelivery()
+    spent.headers = {"x-acquired-count": 1}  # type: ignore[attr-defined]
+    await batch.submit("release", 2, spent)
+    assert spent.calls == ["nack:False"]
+    assert batch.snapshot()["returning"]["release"] == 0  # type: ignore[index]
+
+    gone = StrictDelivery(nack_error=RuntimeError("channel closed"))
+    await batch.submit("release", 3, gone)
+    assert batch.snapshot()["lost_deliveries"]["release"] == 1  # type: ignore[index]
+    assert batch.snapshot()["returning"]["release"] == 1  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_handler_waiting_for_capacity_leaves_its_delivery_to_the_broker() -> None:
+    sink = AsyncMock()
+    batch = engine(sink, max_pending=1, max_hold_s=30.0)
+    await batch.submit("release", 1, StrictDelivery())
+    waiting = StrictDelivery()
+    submit = asyncio.create_task(batch.submit("release", 2, waiting))
+    await asyncio.sleep(0)
+
+    submit.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await submit
+
+    assert waiting.calls == []
+    assert batch.snapshot()["pending"]["release"] == 1  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_time_waiting_for_capacity_counts_toward_the_hold() -> None:
+    """Otherwise a delivery that gets its slot late starts a second hold on the broker's one timer."""
+    gate = asyncio.Event()
+
+    async def write(_key: str, payloads: list[int]) -> list[BatchItemResult]:
+        await gate.wait()
+        return ok(_key, payloads)
+
+    sink = Mock(write=write)
+    batch = engine(sink, max_pending=1, max_hold_s=1.0)
+    await batch.submit("release", 1, StrictDelivery())
+    drain = asyncio.create_task(batch.flush("release"))
+    await asyncio.sleep(0.01)
+    submit = asyncio.create_task(batch.submit("release", 2, StrictDelivery()))
+    await asyncio.sleep(0.05)
+
+    gate.set()
+    await asyncio.wait_for(asyncio.gather(drain, submit), timeout=1)
+
+    assert batch.snapshot()["oldest_pending_age_s"]["release"] >= 0.05  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_waiting_for_capacity_warns_once_that_max_pending_is_too_small(caplog: pytest.LogCaptureFixture) -> None:
+    batch = engine(AsyncMock(), max_pending=1, max_hold_s=0.01)
+    batch._flush_capacity = asyncio.Semaphore(0)
+    await batch.submit("release", 1, StrictDelivery())
+    with caplog.at_level("WARNING", logger="common.batch"):
+        await batch.submit("release", 2, StrictDelivery())
+        await batch.submit("release", 3, StrictDelivery())
+
+    assert sum("max_pending=1" in message for message in caplog.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_working_key_returns_what_it_cannot_reach_within_the_hold_and_writes_the_rest() -> None:
+    """A store slower than the hold: writes succeed, so no backoff ever opens the old gate."""
+    written: list[int] = []
+
+    async def write(_key: str, payloads: list[int]) -> list[BatchItemResult]:
+        await asyncio.sleep(0.05)
+        written.extend(payloads)
+        return ok(_key, payloads)
+
+    batch = engine(Mock(write=write), batch_size=2, max_hold_s=0.03)
+    deliveries = [StrictDelivery() for _ in range(6)]
+    for value, delivery in enumerate(deliveries):
+        await batch.submit("release", value, delivery)
+
+    assert await batch.flush("release") is False
+
+    assert written == [0, 1, 2, 3], "the batch about to be written is spared every time, so it makes progress"
+    assert [delivery.calls for delivery in deliveries[:4]] == [["ack"]] * 4
+    assert [delivery.calls for delivery in deliveries[4:]] == [["nack:True"]] * 2
+
+
 class HungSink:
     """A store that stops answering: raises nothing and returns nothing until told to."""
 

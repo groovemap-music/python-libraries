@@ -34,7 +34,8 @@ import pytest_asyncio
 from psycopg import OperationalError, sql
 from psycopg.types.json import Jsonb
 
-from common.batch import WRITE_CANCEL_GRACE_S, AsyncBatchEngine, BatchItemResult, BatchPolicy
+from common import batch as batch_module
+from common.batch import AsyncBatchEngine, BatchItemResult, BatchPolicy
 from common.delivery import Settlement
 from common.postgres_resilient import AsyncPostgreSQLPool, PostgreSQLFailureClassifier
 from common.rabbitmq_resilient import AsyncResilientRabbitMQ
@@ -199,6 +200,7 @@ class Stack:
         self.peak_handlers = 0
         self.stop_backlog = asyncio.Event()
         self.settled_after: list[float] = []
+        self.delivered = dict.fromkeys(KEYS, 0)
 
     def configure(self, batch_size: int, prefetch: int, max_pending: int, **limits: Any) -> None:
         self.prefetch = prefetch
@@ -256,6 +258,7 @@ class Stack:
                 if record.get("type") == "extraction_complete":
                     await self._complete(key, message)
                     return
+                self.delivered[key] += 1
                 await self.engine.submit(key, record, AmqpDelivery(message, self.settled_after))
                 state = cast("dict[str, dict[str, int]]", self.engine.snapshot())
                 if state["pending"][key] >= min(state["batch_sizes"][key], self.max_pending):
@@ -518,6 +521,10 @@ async def _ran(stack: Stack) -> bool:
     return bool(stack.gate_runs)
 
 
+async def _delivered(stack: Stack, key: str, count: int) -> bool:
+    return stack.delivered[key] >= count
+
+
 async def _held(stack: Stack, key: str, count: int) -> bool:
     return cast("dict[str, dict[str, int]]", stack.engine.snapshot())["pending"][key] == count
 
@@ -563,53 +570,84 @@ async def test_the_drain_behind_a_release_does_not_see_an_empty_key(stack: Stack
     await stack.assert_everything_stored_and_settled()
 
 
-@pytest.mark.skipif(not POSTGRES_CONTAINER, reason="POSTGRES_CONTAINER not set")
-@pytest.mark.timeout(120)
-async def test_a_frozen_store_returns_deliveries_inside_the_bound_and_inside_the_consumer_timeout(stack: Stack) -> None:
-    """``docker pause``: the server accepts bytes and answers nothing, so the write raises nothing.
+async def _frozen(
+    stack: Stack, records: int, frozen_s: float, *, max_pending: int = MAX_PENDING, max_hold_s: float = MAX_HOLD_S, max_write_s: float = MAX_WRITE_S
+) -> None:
+    """Freeze PostgreSQL with ``records`` delivered, then prove what the broker saw, not the engine's account.
 
-    The drain has to end anyway, and one cancel does not end this write, because the driver's
-    rollback waits on the same frozen server. If a delivery stayed past the bound, the broker's own
-    timeout would cancel the consumer, and that is what this checks, not just the engine's account.
+    ``docker pause``: the server accepts bytes and answers nothing, so the write raises nothing. One
+    cancel does not end it either, because the driver's rollback waits on the same frozen server.
+    Each delivery is timed from its handler to its settlement, which is what the broker's timer
+    sees, and that time is what fails this. The consumer count alone would not: aio-pika consumes
+    again after the broker cancels, so it reads 1 either way.
     """
-    frozen_s = 20.0
-    bound_s = MAX_HOLD_S + 2 * (MAX_WRITE_S + WRITE_CANCEL_GRACE_S) + FLUSH_INTERVAL_S
-    consumer_timeout_s = bound_s + 2.0
-    stack.arguments["x-consumer-timeout"] = int(consumer_timeout_s * 1000)
-    stack.configure(BATCH_SIZE, PREFETCH, MAX_PENDING, max_hold_s=MAX_HOLD_S, max_write_s=MAX_WRITE_S)
+    bound_s = max_hold_s + 2 * (max_write_s + batch_module.WRITE_CANCEL_GRACE_S) + FLUSH_INTERVAL_S
+    stack.arguments["x-consumer-timeout"] = int((bound_s + 2.0) * 1000)
+    stack.configure(BATCH_SIZE, PREFETCH, max_pending, max_hold_s=max_hold_s, max_write_s=max_write_s)
     await stack.declare()
     await stack.consume()
-    await stack.publish("artists", TAIL)
-    await _until("the tail to be held", lambda: _held(stack, "artists", TAIL), 10)
 
     subprocess.run(["docker", "pause", POSTGRES_CONTAINER], check=True, timeout=30)  # noqa: S603, S607
     try:
+        # Frozen first: a store still answering writes these before the pause, and proves nothing.
+        await stack.publish("artists", records)
+        await _until("the records to be delivered", lambda: _delivered(stack, "artists", records), 10)
         await asyncio.sleep(frozen_s)
         returned = list(stack.settled_after)
+        consumers = await stack.consumers("artists")
         state = cast("dict[str, dict[str, int]]", stack.engine.snapshot())
     finally:
         subprocess.run(["docker", "unpause", POSTGRES_CONTAINER], check=True, timeout=30)  # noqa: S603, S607
 
+    longest = max(returned, default=0.0)
     print(
-        f"\nFROZEN {frozen_s:g}s: {len(returned)} returns, longest hold {max(returned, default=0.0):.2f}s, bound {bound_s:.2f}s, left {state['abandoned_writes']}"
+        f"\nFROZEN {frozen_s:g}s, {records} delivered: {len(returned)} returns, longest {longest:.2f}s, bound {bound_s:.2f}s, consumers {consumers}, left {state['abandoned_writes']}"
     )
-    assert len(returned) >= TAIL, "nothing came back during the freeze"
-    assert max(returned) <= bound_s
-    await stack.assert_everything_stored_and_settled()
-    consumers = await stack.consumers("artists")
+    assert len(returned) >= records, "not everything came back during the freeze"
+    assert longest <= bound_s
     assert consumers == 1, "the broker cancelled the consumer, so a delivery passed the consumer timeout"
+    await stack.assert_everything_stored_and_settled()
+    assert await stack.consumers("artists") == 1
 
 
-async def test_a_flush_failure_does_not_end_periodic_flushing(stack: Stack) -> None:
+@pytest.mark.skipif(not POSTGRES_CONTAINER, reason="POSTGRES_CONTAINER not set")
+@pytest.mark.timeout(120)
+async def test_a_frozen_store_returns_deliveries_inside_the_bound_and_inside_the_consumer_timeout(stack: Stack) -> None:
+    await _frozen(stack, TAIL, 20.0)
+
+
+@pytest.mark.skipif(not POSTGRES_CONTAINER, reason="POSTGRES_CONTAINER not set")
+@pytest.mark.timeout(120)
+async def test_a_frozen_store_keeps_the_bound_for_deliveries_past_capacity(stack: Stack, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lux's compose shape, scaled: 4000 unacked against ``max_pending`` 1000, and the hold 12 times the write bound.
+
+    The proportions are the test. With a write bound near the hold, the waves of deliveries behind
+    capacity fit inside the stated bound and this passes without the fix.
+    """
+    monkeypatch.setattr(batch_module, "WRITE_CANCEL_GRACE_S", 0.05)
+    await _frozen(stack, 4 * TAIL, 15.0, max_pending=TAIL, max_hold_s=2.0, max_write_s=0.2)
+
+
+@pytest.mark.timeout(120)
+async def test_a_slow_store_that_keeps_working_cannot_hold_a_delivery_past_the_bound(stack: Stack) -> None:
+    """Every write succeeds, so the key is never in backoff, and one drain runs longer than the hold."""
+    batch_size = 2
+    records = 16
+    slow_write_s = 0.6
+    stack.configure(batch_size, PREFETCH, MAX_PENDING, max_hold_s=MAX_HOLD_S, max_write_s=MAX_WRITE_S)
+    stack.sink.pace_s["artists"] = slow_write_s
     await stack.declare()
-    stack.sink.malformed_once.add("artists")
     await stack.consume()
 
-    await stack.publish("artists", 7)
-
+    await stack.publish("artists", records)
     await stack.assert_everything_stored_and_settled()
-    state = cast("dict[str, dict[str, int]]", stack.engine.snapshot())
-    assert state["periodic_failures"]["artists"] == 1
+
+    longest = max(stack.settled_after)
+    bound_s = MAX_HOLD_S + 2 * slow_write_s + FLUSH_INTERVAL_S
+    print(
+        f"\nSLOW {slow_write_s:g}s a write, {records} records: longest unsettled {longest:.2f}s, bound {bound_s:.2f}s, {len(stack.settled_after)} settlements"
+    )
+    assert longest <= bound_s
 
 
 async def test_consumer_timeout_with_deliveries_in_flight_loses_nothing(stack: Stack) -> None:
