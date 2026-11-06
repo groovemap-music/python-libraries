@@ -134,7 +134,9 @@ many are out. This has to outlive the drain that released them. A caller waiting
 gets the next one, which starts as the release ends, and a gate that read an empty queue then
 would land its end-of-type marker with the records on the broker. Each submit pays off one
 return, because a nacked message goes back ahead of the messages behind it. After `RETURN_WINDOW_S`
-(30 s) the count clears, so a redelivery that a handler discards cannot block a marker forever. A
+(30 s) the count clears, so a redelivery that a handler discards cannot block a marker forever. One
+narrow case gets past this: if a nack fails because the channel is dead and recovery takes over
+30 s, the count clears with the record still on the broker. A
 delivery sent to the dead-letter queue is not expected back and does not count, the same as a
 rejected poison record.
 
@@ -156,7 +158,10 @@ A delivery is settled or back on the broker within `max_hold_s + 2 × (max_write
 WRITE_CANCEL_GRACE_S) + flush_interval_s`: one write that started just inside the hold, and one
 other key's write it waited behind for a flush slot. That second term is for 4 keys and 2 slots, so
 count one more write for each further round of keys a flush slot has to serve. At 1500 s, 120 s, 5 s
-and 5 s that is 1755 s, inside RabbitMQ's 1800 s. The event loop has to be running: a blocked loop
+and 5 s that is 1755 s, inside RabbitMQ's 1800 s. That figure is for a hung store: a store that is
+slow but still answering can reach about 1950 s in a corner that needs every write near 120 s, on
+every key, after batches have halved, and the result is the old uncounted consumer cancel with
+nothing lost. The event loop has to be running: a blocked loop
 stops every timer here, and the broker's keeps going.
 
 Keep `max_write_s` above the longest legitimate write. On lux during a Discogs load the longest
