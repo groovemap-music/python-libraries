@@ -109,6 +109,37 @@ key is in transient backoff is returned with `nack(requeue=True)` (never acked, 
 reported to `BatchObserver.settled` as `requeue` / `held_timeout`. The default `None` keeps the
 unbounded hold, so existing consumers are unchanged until they opt in.
 
+A returned delivery is still an unwritten record, so it stays in `flush()` and
+`snapshot()["pending"]` until a handler submits it again, and `snapshot()["returning"]` shows how
+many are out. This has to outlive the drain that released them. A caller waiting on that drain
+gets the next one, which starts as the release ends, and a gate that read an empty queue then
+would land its end-of-type marker with the records on the broker. Each submit pays off one
+return, because a nacked message goes back ahead of the messages behind it. After `RETURN_WINDOW_S`
+(30 s) the count clears, so a redelivery that a handler discards cannot block a marker forever. A
+delivery sent to the dead-letter queue is not expected back and does not count, the same as a
+rejected poison record.
+
+The hold only acts between writes, so a store that hangs needs its own bound. A paused server
+accepts bytes and answers nothing, so a write raises nothing and no driver read timeout applies.
+`BatchPolicy.max_write_s` (default `DEFAULT_MAX_WRITE_S`, 120 s) ends the write and counts it as a
+transient failure, whatever the classifier says about the `BatchWriteTimeoutError`. A hang never
+reaches `max_poison_retries`.
+
+The write runs in its own task and gets `WRITE_CANCEL_GRACE_S` (5 s) to stop once cancelled,
+because a timeout inside the write would depend on cancellation finishing. Measured under
+`docker pause`, one cancel frees a Neo4j write at once. A PostgreSQL write was still in its rollback
+45 s later, and stayed there until the server came back. A write that outlives the grace is left
+to finish on its own and counted in `snapshot()["abandoned_writes"]`. Its batch may be written
+twice, which sinks already allow for because every delivery is at least once. The connection pool
+bounds how many such writes can pile up.
+
+A held delivery is back on the broker within `max_hold_s + 2 × (max_write_s + WRITE_CANCEL_GRACE_S)
++ flush_interval_s`: one write that started just inside the hold, and one other key's write it
+waited behind for `max_concurrent_flushes`. At 1500 s, 120 s, 5 s and 5 s that is 1755 s, inside
+RabbitMQ's 1800 s. Keep `max_write_s` above the longest legitimate write: on lux during a Discogs
+load the longest running Neo4j transaction in five samples was 0.47 s. A write that does run past it
+is retried at half the batch size, so a slow store still makes progress.
+
 ### What ends a message that keeps failing
 
 `x-delivery-limit` is not enough on its own. Measured on quorum queues with limit 20 on RabbitMQ
