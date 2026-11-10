@@ -358,3 +358,55 @@ def test_pool_gauges_and_wait_histogram_report_pool_state(collector: Collector) 
     assert list(pool_points(runtime_metrics.DB_CLIENT_CONNECTION_MAX).values()) == [7]
     assert collector.metrics()[runtime_metrics.DB_CLIENT_CONNECTION_WAIT_TIME].unit == "s"
     assert collector.attributes(runtime_metrics.POOL_CONNECTIONS_CLOSED) == [{"db.client.connection.pool.name": "pool-probe", "reason": "idle"}]
+
+
+def _filled_upper_bounds(collector: Collector, name: str) -> list[float]:
+    """Return the upper bound (`le`) of every non-empty bucket of one histogram's single point."""
+    (point,) = collector.points(name)
+    return [point.explicit_bounds[index] for index, count in enumerate(point.bucket_counts) if count]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        runtime_metrics.DB_OPERATION_DURATION,
+        runtime_metrics.MESSAGING_OPERATION_DURATION,
+        runtime_metrics.DB_CLIENT_CONNECTION_WAIT_TIME,
+    ],
+)
+def test_duration_histograms_declare_second_scale_boundaries(collector: Collector, name: str) -> None:
+    # Record once so the histogram has a data point to read the boundaries from.
+    if name == runtime_metrics.DB_OPERATION_DURATION:
+        runtime_metrics.record_db_operation("postgresql", "session", 0.03)
+    elif name == runtime_metrics.MESSAGING_OPERATION_DURATION:
+        runtime_metrics.record_sent_message("graphinator", 0.03)
+    else:
+        runtime_metrics.record_pool_wait("pool-probe", 0.03)
+
+    (point,) = collector.points(name)
+    assert tuple(point.explicit_bounds) == runtime_metrics.SECONDS_DURATION_BUCKETS
+    assert point.explicit_bounds[0] == 0.0001
+    assert point.explicit_bounds[-1] == 60.0
+    assert collector.metrics()[name].unit == "s"
+
+
+def test_thirty_millisecond_operation_lands_below_fifty_milliseconds(collector: Collector) -> None:
+    runtime_metrics.record_db_operation("postgresql", "session", 0.030)
+
+    assert _filled_upper_bounds(collector, runtime_metrics.DB_OPERATION_DURATION) == [0.05]
+
+
+def test_sub_ten_millisecond_and_multi_second_values_land_in_their_buckets(collector: Collector) -> None:
+    runtime_metrics.record_db_operation("postgresql", "session", 0.0025)
+    runtime_metrics.record_db_operation("postgresql", "session", 2.5)
+
+    (point,) = collector.points(runtime_metrics.DB_OPERATION_DURATION)
+    assert point.count == 2
+    filled = _filled_upper_bounds(collector, runtime_metrics.DB_OPERATION_DURATION)
+    assert filled == [0.0025, 2.5]
+
+
+def test_pool_wait_of_a_quarter_second_lands_in_the_quarter_second_bucket(collector: Collector) -> None:
+    runtime_metrics.record_pool_wait("pool-probe", 0.25)
+
+    assert _filled_upper_bounds(collector, runtime_metrics.DB_CLIENT_CONNECTION_WAIT_TIME) == [0.25]
