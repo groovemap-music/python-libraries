@@ -7,6 +7,13 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Add optional `from_label_id` / `to_label_id` to `common.agent_tools.find_path`, with a new optional
+  `resolve_label_id(driver, label_id)` callable. When an id is set and that end's type is `label`,
+  the end resolves by id, so a label whose name is shared can be picked exactly. Ids on non-label
+  ends are ignored. Calls without ids are unchanged, and `ResolveNameFn` keeps its signature, so
+  existing resolver closures keep working. An id on a label end without `resolve_label_id` raises
+  `ValueError`. The version is not bumped here; the release owner tags it.
+
 - Fix `AsyncBatchEngine` reporting a key complete while its records were on the broker. Deliveries
   returned at `max_hold_s` now count in `flush()` and `snapshot()["pending"]` until they are
   submitted again, or for `RETURN_WINDOW_S` (30 s) if they never are. Before this, the drain that
