@@ -15,8 +15,13 @@ The names in `common.agent_tools.__all__` are the stable public import surface.
 | Media filter validation | `validate_media_filter` | Nothing — pure taxonomy lookup |
 | Entity details | `get_artist_details`, `get_genre_details`, `get_label_details`, `get_release_details`, `get_style_details` | Driver and entity handler |
 | Typed media access | `media_of` | Nothing — pure accessor over a release dict |
-| Graph traversal | `find_path` | Driver and path resolver |
+| Graph traversal | `find_path` | Driver and path resolver; optional label-id resolver |
 | Graph summaries | `get_genre_tree`, `get_graph_stats` | Driver and summary resolver |
+
+`find_path` takes optional `from_label_id` and `to_label_id`. When one is set and that end's type
+is `label`, the end resolves by id through the consumer's `resolve_label_id(driver, label_id)`
+callable, so labels that share a name can be told apart. Passing an id on a label end without
+`resolve_label_id` raises `ValueError`. Calls without ids use `resolve_name` exactly as before.
 
 All functions are asynchronous. They adapt typed inputs and resolver results into stable
 dictionary response shapes; they do not open connections, read credentials, select web
