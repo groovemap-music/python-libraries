@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- Fix the duration histograms in `common.runtime_metrics` using OpenTelemetry's millisecond-scale default
+  buckets for values recorded in seconds. `db.client.operation.duration`, `messaging.client.operation.duration`
+  and `db.client.connection.wait_time` now declare explicit seconds-scale bucket boundaries (0.1 ms to 60 s),
+  so a 30 ms operation lands in the 0.05 s bucket instead of the first 0-5 bucket. Metric names and units are
+  unchanged, and the boundaries are the same as catalog-api's `db.client.operation.duration`. Dashboards that
+  read these series without hard-coded `le` values are unaffected. The boundaries are advisory: an
+  OpenTelemetry SDK that ignores `explicit_bucket_boundaries_advisory` keeps the defaults. The version is not
+  bumped here; the release owner tags it.
+
 - Add optional `from_label_id` / `to_label_id` to `common.agent_tools.find_path`, with a new optional
   `resolve_label_id(driver, label_id)` callable. When an id is set and that end's type is `label`,
   the end resolves by id, so a label whose name is shared can be picked exactly. Ids on non-label

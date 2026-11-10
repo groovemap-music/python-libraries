@@ -55,6 +55,33 @@ POOL_CONNECTIONS_CLOSED = "groovemap.pipeline.pool.connections_closed"
 
 MESSAGING_SYSTEM = "rabbitmq"
 
+# Bucket boundaries, in seconds, for every duration histogram in this module. The instruments
+# record seconds, so the OpenTelemetry default boundaries (0, 5, 10, 25, ... meant for
+# milliseconds) would put nearly every observation in the first bucket. These run from 0.1 ms,
+# the low end of a pooled-connection wait, to 60 s, past which a statement is a timeout. Each
+# value is an upper bound (`le`). The same tuple is used by catalog-api's
+# `db.client.operation.duration`, so the series line up across services.
+SECONDS_DURATION_BUCKETS = (
+    0.0001,
+    0.00025,
+    0.0005,
+    0.001,
+    0.0025,
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+)
+
 # The circuit-breaker gauge reports one value per live breaker. A weak set keeps the callback
 # from pinning a breaker (and the pool behind it) alive after its owner is gone.
 _breakers: WeakSet[CircuitBreaker] = WeakSet()
@@ -123,6 +150,7 @@ def _build_instruments() -> dict[str, Any]:
             DB_OPERATION_DURATION,
             unit="s",
             description="Duration of a database client operation.",
+            explicit_bucket_boundaries_advisory=list(SECONDS_DURATION_BUCKETS),
         ),
         MESSAGING_CONSUMED_MESSAGES: meter.create_counter(
             MESSAGING_CONSUMED_MESSAGES,
@@ -132,6 +160,7 @@ def _build_instruments() -> dict[str, Any]:
             MESSAGING_OPERATION_DURATION,
             unit="s",
             description="Duration of a messaging client operation.",
+            explicit_bucket_boundaries_advisory=list(SECONDS_DURATION_BUCKETS),
         ),
         MESSAGING_SENT_MESSAGES: meter.create_counter(
             MESSAGING_SENT_MESSAGES,
@@ -146,6 +175,7 @@ def _build_instruments() -> dict[str, Any]:
         DB_CLIENT_CONNECTION_WAIT_TIME,
         unit="s",
         description="Time a caller waited for a pooled connection (queueing, creation and health probe), excluding the hold time.",
+        explicit_bucket_boundaries_advisory=list(SECONDS_DURATION_BUCKETS),
     )
     instruments[POOL_CONNECTIONS_CLOSED] = meter.create_counter(
         POOL_CONNECTIONS_CLOSED,
